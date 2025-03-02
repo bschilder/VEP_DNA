@@ -1,5 +1,5 @@
-# VEP_UTR
-Using UTR sequence models to compute Variant Effect Predictions across biobank-scale populations.
+# VEP_DNA
+Using DNA sequence models to compute Variant Effect Predictions across biobank-scale populations.
 
 ## Directory description
 - *conda/* : Files to define Conda environments.
