@@ -73,12 +73,14 @@ def list_remote_vcf(key="1000_Genomes_30x_on_GRCh38",
     
     Parameters:
     -----------
-    vcf_ftp : str, optional
-        Base URL for the 1000 Genomes Project VCF files.
-        Default points to the 20190312 biallelic SNV and INDEL release.
-    save_dir : str, optional
-        Local directory where VCF files will be saved.
-        Default is a '1KG' subdirectory in the configured data directory.
+    key : str
+        The key to the 1000 Genomes Project data collection (with underscores instead of spaces). 
+        See `get_ftp_dict()` for options or go to: 
+        https://www.internationalgenome.org/data-portal/data-collection
+    cache : str
+        The path to the cache directory.
+    add_key_subdir : bool
+        Whether to add the key subdirectory to the local path.
         
     Returns:
     --------
@@ -169,16 +171,55 @@ def download_vcfs(key="1000_Genomes_30x_on_GRCh38",
 
 
 def get_pop(url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/phase3/20131219.populations.tsv"):
+    """
+    Retrieve population information from the 1000 Genomes Project.
+    
+    Parameters:
+    -----------
+    url : str, optional
+        URL to the populations TSV file.
+        Default is the official 1000 Genomes Project populations file.
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame containing population information with 'Population Code' as index.
+    """
     pops = pd.read_csv(url, sep="\t")
     pops.index = pops['Population Code'].tolist()
     return pops
 
 def get_ped(url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20200731.ALL.ped"):
+    """
+    Retrieve pedigree information from the 1000 Genomes Project.
+    
+    Parameters:
+    -----------
+    url : str, optional
+        URL to the pedigree (PED) file.
+        Default is the official 1000 Genomes Project integrated call samples file.
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame containing pedigree information with 'Individual ID' as index.
+    """
     ped = pd.read_csv(url, sep="\t")
     ped.index = ped['Individual ID'].tolist()
     return ped
-
 def get_sample_metadata():
+    """
+    Retrieve and merge sample metadata from the 1000 Genomes Project.
+    
+    This function combines pedigree information with population data to create
+    a comprehensive sample metadata DataFrame.
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        DataFrame containing merged sample metadata with individual information
+        and population details.
+    """
     ped = get_ped()
     pop = get_pop()
     sample_metadata = ped.merge(pop, left_on='Population', right_index=True)
@@ -186,6 +227,22 @@ def get_sample_metadata():
 
 def get_annotation_vcf(chrom,
                        base_url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/"):
+    """
+    Retrieve a variant annotation VCF file for a specific chromosome.
+    
+    Parameters:
+    -----------
+    chrom : str or int
+        Chromosome identifier (with or without 'chr' prefix).
+    base_url : str, optional
+        Base URL for the annotation VCF files.
+        Default points to the 1000 Genomes Project functional annotation directory.
+        
+    Returns:
+    --------
+    pysam.VariantFile
+        A pysam VariantFile object for the requested chromosome annotation file.
+    """
     import pysam
     chrom = "chr"+str(chrom).replace("chr", "")
     url = f"{base_url}ALL.{chrom}.phase3_shapeit2_mvncall_integrated_v5.20130502.sites.annotation.vcf.gz"  
@@ -195,6 +252,25 @@ def query_annotation_vcf(vcf,
                          rec,
                          start=None,
                          stop=None):
+    """
+    Query a variant annotation VCF file for a specific genomic region.
+    
+    Parameters:
+    -----------
+    vcf : pysam.VariantFile
+        The variant annotation file to query.
+    rec : object
+        A record object with contig and pos attributes.
+    start : int, optional
+        Start position for the query. If None, uses rec.pos.
+    stop : int, optional
+        Stop position for the query. If None, uses rec.pos+1.
+        
+    Returns:
+    --------
+    iterator
+        An iterator over the variants in the specified region.
+    """
     chrom = rec.contig.replace("chr", "")
     if start is None:
         start = rec.pos
