@@ -207,6 +207,7 @@ def get_ped(url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/int
     ped = pd.read_csv(url, sep="\t")
     ped.index = ped['Individual ID'].tolist()
     return ped
+
 def get_sample_metadata():
     """
     Retrieve and merge sample metadata from the 1000 Genomes Project.
