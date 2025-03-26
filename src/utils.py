@@ -4,6 +4,40 @@ import pandas as pd
 from typing import Optional, Union
 
 
+def download_url(url, save_path): 
+    import time
+    import requests
+    import os
+    t0 = time.time() 
+    if os.path.exists(save_path):
+        print("Already exists:", save_path)
+    else:
+        try: 
+            r = requests.get(url) 
+            with open(save_path, 'wb') as f: 
+                f.write(r.content) 
+                print('url:', url, 'time (s):', time.time())
+                return url 
+        except Exception as e: 
+            print('Exception in download_url():', e)
+
+    t1 = time.time()
+    print(f"Downloaded {url} in {t1 - t0} seconds")
+    
+def download_parallel(url_fn_pairs): 
+    """
+    Download a list of URLs in parallel.
+    """
+    from multiprocessing.pool import ThreadPool
+    if isinstance(url_fn_pairs, list):
+        url_fn_pairs = list(zip(url_fn_pairs, url_fn_pairs))
+    
+    cpus = os.cpu_count() 
+    results = ThreadPool(cpus - 1).imap_unordered(lambda pair: download_url(url=pair[0], save_path=pair[1]),
+                                                   url_fn_pairs)  
+    return results
+
+
 def is_pd(x):
     """
     Check if the input object is a pandas DataFrame.
