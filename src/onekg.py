@@ -61,7 +61,7 @@ def get_ftp_dict():
             'url': "https://ngs.sanger.ac.uk/production/hgdp/hgdp_wgs.20190516/",
             'manifest': None,
             'manifest_cols': None,
-            'manifest_sep': None
+            'manifest_sep': None,
         }
     }
 
