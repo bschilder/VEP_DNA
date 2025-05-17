@@ -1,9 +1,16 @@
-from multimolecule import DnaTokenizer, SpliceAiModel
+# Source: https://huggingface.co/multimolecule/spliceai
+
+from multimolecule import RnaTokenizer, SpliceAiModel
+import numpy as np
+import torch
+
+import src.vep_pipeline as vp
+import src.biopython as bp
 
 DEFAULT_MODEL_NAME = "multimolecule/spliceai"
 
 def load_tokenizer(model_name=DEFAULT_MODEL_NAME):
-    return DnaTokenizer.from_pretrained(model_name)
+    return RnaTokenizer.from_pretrained(model_name)
 
 def load_model(model_name=DEFAULT_MODEL_NAME):
     return SpliceAiModel.from_pretrained(model_name)
@@ -18,7 +25,7 @@ def run_model(seq,
     Returns:
         output: torch.Tensor, the output of the model.
     Example:
-        >>> seq = 'CGATCTGACGTGGGTGTCATCGCATTATCGATATTGCAT'
+        >>> seq = 'agcagucauuauggcgaa'
         >>> output = run_model(seq)
         >>> output.keys()
         >>> output.logits.squeeze()
@@ -28,14 +35,23 @@ def run_model(seq,
     if tokenizer is None:
         tokenizer = load_tokenizer()
 
+    # Convert DNA to RNA
+    seq = bp.dna_to_rna(seq)
+
     tokenized_seq = tokenizer(seq, return_tensors="pt")["input_ids"]
     return model(tokenized_seq)
 
 def get_donor_prob(output):
-    return output.logits[0, :, 1]
+    return vp.logits_to_prob(
+            output.logits[0, :, 1],
+            framework="torch"
+            )
 
 def get_acceptor_prob(output):
-    return output.logits[0, :, 2]
+    return vp.logits_to_prob(
+            output.logits[0, :, 2],
+            framework="torch"
+            )
 
 def run_vep(seq_wt, seq_mut, model=None, tokenizer=None):
     results = {}
@@ -49,5 +65,11 @@ def run_vep(seq_wt, seq_mut, model=None, tokenizer=None):
     output = run_model(seq_mut, model, tokenizer)
     results["mut_donor_prob"] = get_donor_prob(output)
     results["mut_acceptor_prob"] = get_acceptor_prob(output)
+    
+    # VEP scores
+    results["VEP_donor"] = np.log(results["mut_donor_prob"] / results["wt_donor_prob"]).mean()
+    results["VEP_acceptor"] = np.log(results["mut_acceptor_prob"] / results["wt_acceptor_prob"]).mean()
 
     return results
+
+
