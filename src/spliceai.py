@@ -15,7 +15,6 @@ def load_models():
     return models
 
 def run_model(seq, models=None):
-
     """
     Run the spliceai model on a sequence.
     Args:
