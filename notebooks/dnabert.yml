@@ -4,10 +4,10 @@ channels:
 dependencies:
     - pandas
     - numpy
-    - torch
     - IProgress
     - ipywidgets
-    - biopython
-    - plotly
-    - seaborn
+    - transformers
     - pip
+    - pip:
+        - torch
+        - transformers
