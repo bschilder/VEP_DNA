@@ -3,11 +3,9 @@ import torch
 from torch.amp import autocast
 
 from borzoi_pytorch import Borzoi
+import src.utils as ut
 
 DEFAULT_MODEL_NAME = "johahi/flashzoi-replicate-0"
-
-def _get_device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def one_hot_seq(seq: str) -> np.ndarray:
     mapping = {'A':0,'C':1,'G':2,'T':3}
@@ -36,7 +34,7 @@ def score_all_tracks(seq: str,
     if tokenizer is None:
         tokenizer = load_tokenizer()
     if device is None:
-        device = _get_device()
+        device = ut.get_device()
 
     # Convert numpy array to torch tensor, 
     # add batch dimension, 

@@ -1,3 +1,4 @@
+# Source: https://github.com/Illumina/SpliceAI
 
 from keras.models import load_model
 from pkg_resources import resource_filename

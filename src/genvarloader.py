@@ -161,9 +161,39 @@ def get_tx_seqs_spliced(ds,
 
 
 def string_to_bytearray(str):
+    """
+    Convert a string to a bytearray.
+
+    Args:
+        str: str, the string to convert.
+
+    Returns:
+        bytearray, the bytearray of the string.
+
+    Example:
+        >>> string_to_bytearray('ACGT')
+        array([b'A', b'C', b'G', b'T'], dtype=uint8)
+    """
+    if isinstance(str, np.ndarray):
+        return str
     return np.array(list(str)).astype('|S1')
 
 def bytearray_to_string(byte_arr):
+    """
+    Convert a bytearray to a string.
+
+    Args:
+        byte_arr: bytearray, the bytearray to convert.
+
+    Returns:
+        str, the string of the bytearray.
+
+    Example:
+        >>> bytearray_to_string(np.array([b'A', b'C', b'G', b'T']))
+        'ACGT'
+    """
+    if isinstance(byte_arr, str):
+        return byte_arr
     return byte_arr.tobytes().decode()
 
 def bytearray_to_bioseq(byte_arr):
@@ -270,7 +300,10 @@ def calculate_sequence_similarities(ds,
     )
     return seq_sim
 
-def get_wt_haps(site_ds, sample_idx=None):
+def get_wt_haps(site_ds, 
+                sample_idx=None, 
+                ploid_idx=None, 
+                as_str=False):
     """
     Get the WT haplotype sequence for a given sample index.
     Note: The first row of the site_ds.rows is the WT haplotype.
@@ -278,13 +311,45 @@ def get_wt_haps(site_ds, sample_idx=None):
     Parameters:
         site_ds (Dataset): The dataset containing the haplotypes
         sample_idx (int): The index of the sample to get the WT haplotype for
-        
+        ploid_idx (int): The index of the ploidy to get the WT haplotype for
+            If None, the WT haplotype for all ploidies will be returned
+        as_str (bool): Whether to return the WT haplotype as a string
     Returns:
         str: The WT haplotype sequence
     """
     wt_haps = site_ds.dataset[site_ds.rows[0, "region_idx"], sample_idx].haps
+    
+    if ploid_idx is not None:
+        wt_haps = wt_haps[ploid_idx]
+    if as_str is True:
+        wt_haps = bytearray_to_string(wt_haps)
     return wt_haps
 
+
+def get_mut_haps(site_ds, 
+                 site_idx,
+                 sample_idx=None, 
+                 ploid_idx=None, 
+                 as_str=False):
+    """
+    Get the mutated haplotype sequence for a given sample index.
+
+    Parameters:
+        site_ds (Dataset): The dataset containing the haplotypes
+        site_idx (int): The index of the site to get the mutated haplotype for
+        sample_idx (int): The index of the sample to get the mutated haplotype for
+        ploid_idx (int): The index of the ploidy to get the mutated haplotype for
+        as_str (bool): Whether to return the mutated haplotype as a string
+    Returns:
+        str: The mutated haplotype sequence
+    """
+    mut_haps, flags = site_ds[site_idx, sample_idx]
+    mut_haps = mut_haps.haps
+    if ploid_idx is not None:
+        mut_haps = mut_haps[ploid_idx]
+    if as_str is True:
+        mut_haps = bytearray_to_string(mut_haps)
+    return mut_haps
 
 def add_site_name(site_ds, force=False):
     """

@@ -262,3 +262,17 @@ def load_pickle(save_path,
                 print(f"Failed to load pickle file: {e}")
                 return None
     return None
+
+def get_device():
+    """
+    Get the device to use for the model.
+
+    Returns:
+        torch.device: The device to use for the model.
+
+    Example:
+        >>> _get_device()
+        device(type='cuda', index=0)
+    """
+    import torch
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
