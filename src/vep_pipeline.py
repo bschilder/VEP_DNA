@@ -1,3 +1,4 @@
+import numpy as np
 
 def run_vep(model_name, 
             seq_wt, 
@@ -53,17 +54,32 @@ def load_tokenizer(model_name):
     return _load_tokenizer()
 
 
-def get_wt_haps(site_ds, sample_idx=None):
+def logits_to_prob(logits,
+                   framework="torch"):
     """
-    Get the WT haplotype sequence for a given sample index.
-    Note: The first row of the site_ds.rows is the WT haplotype.
+    Convert logits to probabilities.
 
     Parameters:
-        site_ds (Dataset): The dataset containing the haplotypes
-        sample_idx (int): The index of the sample to get the WT haplotype for
-        
+        logits: np.ndarray or torch.Tensor or tf.Tensor
+        framework: str, "torch" or "tensorflow"
+
     Returns:
-        str: The WT haplotype sequence
+        prob: np.ndarray or torch.Tensor or tf.Tensor
     """
-    wt_haps = site_ds.dataset[site_ds.rows[0, "region_idx"], sample_idx].haps
-    return wt_haps
+    if framework == "torch":
+        import torch
+    elif framework == "tensorflow":
+        import tensorflow as tf
+    else:
+        raise ValueError(f"Invalid framework: {framework}")
+    
+    if framework == "torch":
+        if isinstance(logits, np.ndarray):
+            logits = torch.from_numpy(logits)
+        return torch.sigmoid(logits)
+    elif framework == "tensorflow":
+        if isinstance(logits, np.ndarray):
+            logits = tf.convert_to_tensor(logits)
+        return tf.sigmoid(logits)
+    else:
+        raise ValueError(f"Invalid framework: {framework}")

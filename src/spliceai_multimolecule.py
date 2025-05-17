@@ -1,4 +1,10 @@
+# Source: https://huggingface.co/multimolecule/spliceai
+
 from multimolecule import DnaTokenizer, SpliceAiModel
+import numpy as np
+import torch
+
+import src.vep_pipeline as vp
 
 DEFAULT_MODEL_NAME = "multimolecule/spliceai"
 
@@ -32,10 +38,16 @@ def run_model(seq,
     return model(tokenized_seq)
 
 def get_donor_prob(output):
-    return output.logits[0, :, 1]
+    return vp.logits_to_prob(
+            output.logits[0, :, 1],
+            framework="torch"
+            )
 
 def get_acceptor_prob(output):
-    return output.logits[0, :, 2]
+    return vp.logits_to_prob(
+            output.logits[0, :, 2],
+            framework="torch"
+            )
 
 def run_vep(seq_wt, seq_mut, model=None, tokenizer=None):
     results = {}
@@ -49,5 +61,9 @@ def run_vep(seq_wt, seq_mut, model=None, tokenizer=None):
     output = run_model(seq_mut, model, tokenizer)
     results["mut_donor_prob"] = get_donor_prob(output)
     results["mut_acceptor_prob"] = get_acceptor_prob(output)
+    
+    # VEP scores
+    results["vep_donor"] = np.log(results["mut_donor_prob"] / results["wt_donor_prob"]).mean()
+    results["vep_acceptor"] = np.log(results["mut_acceptor_prob"] / results["wt_acceptor_prob"]).mean()
 
     return results
