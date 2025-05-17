@@ -125,7 +125,7 @@ def run_vep_pipeline(site_ds,
                                     sample=sample_name, 
                                     ploid=ploid_idx, 
                                     slot=k)
-                                    ] = v
+                                    ] = utils.torch_to_numpy(v)
                             
                     # Save after each ploid is complete
                     if update_frequency=="ploid":
@@ -303,36 +303,6 @@ def load_tokenizer(model_name):
         
     return _load_tokenizer()
 
-def logits_to_prob(logits,
-                   framework="torch"):
-    """
-    Convert logits to probabilities.
-
-    Parameters:
-        logits: np.ndarray or torch.Tensor or tf.Tensor
-        framework: str, "torch" or "tensorflow"
-
-    Returns:
-        prob: np.ndarray or torch.Tensor or tf.Tensor
-    """
-    if framework == "torch":
-        import torch
-    elif framework == "tensorflow":
-        import tensorflow as tf
-    else:
-        raise ValueError(f"Invalid framework: {framework}")
-    
-    if framework == "torch":
-        if isinstance(logits, np.ndarray):
-            logits = torch.from_numpy(logits)
-        return torch.sigmoid(logits).detach().numpy()
-    elif framework == "tensorflow":
-        if isinstance(logits, np.ndarray):
-            logits = tf.convert_to_tensor(logits)
-        return tf.sigmoid(logits)
-    else:
-        raise ValueError(f"Invalid framework: {framework}")
-    
 
 def get_model_to_metric_map():
     """

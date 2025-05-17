@@ -288,3 +288,14 @@ def device_to_str(device):
         return device
     else:
         raise ValueError(f"Invalid device: {device}. Must be either a torch.device or a string.")
+    
+
+def torch_to_numpy(x):
+    """
+    Convert a torch.Tensor to a numpy.ndarray.
+    """
+    import torch
+    if isinstance(x, torch.Tensor):
+        return x.cpu().numpy()
+    else:
+        return x

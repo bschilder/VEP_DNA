@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 import src.vep_pipeline as vp
+import src.vep_metrics as vm
 import src.biopython as bp
 
 DEFAULT_MODEL_NAME = "multimolecule/spliceai"
@@ -42,13 +43,13 @@ def run_model(seq,
     return model(tokenized_seq)
 
 def get_donor_prob(output):
-    return vp.logits_to_prob(
+    return vm.logits_to_probs(
             output.logits[0, :, 1],
             framework="torch"
             )
 
 def get_acceptor_prob(output):
-    return vp.logits_to_prob(
+    return vm.logits_to_probs(
             output.logits[0, :, 2],
             framework="torch"
             )

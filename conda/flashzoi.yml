@@ -5,6 +5,7 @@ channels:
   - bioconda
   - defaults
 dependencies:
+  - python>=3.10,<3.13
   - _libgcc_mutex=0.1=conda_forge
   - _openmp_mutex=4.5=2_gnu
   - anyio=4.9.0=pyh29332c3_0
@@ -192,7 +193,6 @@ dependencies:
   - pycparser=2.22=pyh29332c3_1
   - pygments=2.19.1=pyhd8ed1ab_0
   - pysocks=1.7.1=pyha55dd90_7
-  - python=3.9.15=h47a2c10_0_cpython
   - python-dateutil=2.9.0.post0=pyhff2d567_1
   - python-fastjsonschema=2.21.1=pyhd8ed1ab_0
   - python_abi=3.9=7_cp39

@@ -1,5 +1,9 @@
 import torch
 from transformers import AutoTokenizer, AutoModel
+from typing import Optional
+
+import src.utils as utils
+import src.vep_metrics as vm
 
 DEFAULT_MODEL_NAME = "zhihan1996/DNABERT-2-117M"
 
@@ -24,32 +28,66 @@ def get_embedding_mean(embedding, dim=0):
 
 def run_model(seq: str, 
               model: torch.nn.Module, 
-              tokenizer: AutoTokenizer) -> torch.Tensor:
+              tokenizer: AutoTokenizer, 
+              device: Optional[str] = None) -> torch.Tensor:
     
     if model is None:
         model = load_model()
     if tokenizer is None:
         tokenizer = load_tokenizer()
+    
+    if device is None:
+        device = utils.get_device()
+        # print(f"Using device: {device}")
 
-    inputs = tokenizer(seq, return_tensors = 'pt')["input_ids"]
-    embedding = model(inputs)[0] # [1, sequence_length, 768]
+    tokens = tokenizer(seq, return_tensors = 'pt')["input_ids"]
+    tokens = tokens.to(device)
+
+    model = model.to(device)
+    model.eval()
+    
+    embedding = model(tokens) # [1, sequence_length, 768]
     return embedding
 
 
-def run_vep(seq_wt, seq_mut, model=None, tokenizer=None):
+def run_vep(seq_wt, 
+            seq_mut, 
+            model=None, 
+            tokenizer=None
+            ):
     results = {}
 
     # WT
     output_wt = run_model(seq_wt, model, tokenizer)
-    embedding_wt = get_embedding_mean(output_wt)
+    logits_wt = get_embedding_mean(output_wt)
 
     # Mut
     output_mut = run_model(seq_mut, model, tokenizer)
-    embedding_mut = get_embedding_mean(output_mut)
-    
-    # Calculate cosine distance between mean embeddings
-    cos = torch.nn.CosineSimilarity(dim=0)
-    cosine_distance = 1 - cos(embedding_wt, embedding_mut)
-    results['cosine_distance'] = cosine_distance.item()
+    logits_mut = get_embedding_mean(output_mut)
 
+    # Calculate cosine distance between mean embeddings
+    results['VEP_css'] = vm.cosine_sim(logits_wt, 
+                                       logits_mut, 
+                                       axis=0, 
+                                       dim=0
+                                       )
+
+    # Calculate KL divergence between probabilities
+    results['VEP_kld'] = vm.kl_divergence(logits_wt, 
+                                          logits_mut, 
+                                          axis=0
+                                          )
+    
+    # Calculate Jensen-Shannon divergence between probabilities
+    results['VEP_jsd'] = vm.js_divergence(logits_wt, 
+                                          logits_mut, 
+                                          axis=0
+                                          )
+    
+    # Calculate Jensen-Shannon divergence between probabilities
+    results['VEP_pdiff'] = vm.prob_diff(logits_wt, 
+                                        logits_mut, 
+                                        axis=0
+                                            )
+    
     return results
