@@ -10,11 +10,14 @@ import src.genvarloader as GVL
 
 def run_vep_pipeline(site_ds, 
                      models, 
-                     results_dir='vep_results', 
-                     variant_set="ClinVar_UTR", 
+                     ds_results=None,
+                     zarr_path=None,
                      sample_limit=None,
                      site_limit=None,
-                     force=False):
+                     force=False,
+                     update_frequency="ploid",
+                     device=None,
+                     verbose=True):
     """
     Run the VEP pipeline on a dataset.
     
@@ -23,72 +26,122 @@ def run_vep_pipeline(site_ds,
         models (list): List of model names to run
         results_dir (str): Directory to store results
         variant_set (str): Name of the variant set
-        force (bool): If True, overwrite existing results
-    """
-    # Create path for results file
-    zarr_path = os.path.join(results_dir, f"{variant_set}.zarr")
-    os.makedirs(results_dir, exist_ok=True)
+        force (bool): If True, overwrite existing results.
+        sample_limit (int): Maximum number of samples to run.
+        site_limit (int): Maximum number of sites to run.
+        update_frequency (str): Frequency to update the dataset.
+        verbose (bool): If True, print verbose output.
+        device (str): Device to run the model on.
+    """ 
 
     # Initialize or load the dataset
-    ds_results = init_or_load_xarray_dataset(
-        zarr_path=zarr_path,
-        models=models, 
-        site_ds=site_ds,
-        force=force
-    )
+    if ds_results is None:
+        ds_results = init_or_load_xarray_dataset(
+            zarr_path=zarr_path,
+            models=models, 
+            site_ds=site_ds,
+            force=force>1
+        )
+
+    # Gather metadata    
+    all_samples = site_ds.dataset.samples
+    all_ploid = ds_results.coords["ploid"].values.tolist()
 
     # Iterate over models
-    for model_name in tqdm(models, 
-                           desc="Running models"):
-        model_name = model_name.lower()
+    for model_name in models:
         
         # Load the model
+        model_name = model_name.lower()
         model = load_model(model_name)
         device = utils.get_device()
-        if device.type=="GPU":
-            model.to(device.type)
+
+        # Init the model
+        if device is None:
+            device = utils.get_device()
+        device_str = utils.device_to_str(device)
+        if device_str=="GPU":
+            model.to(device_str)
             model.eval()
         
         # Load the tokenizer
         tokenizer = load_tokenizer(model_name)
 
-        # Get list of missing values for this model
-        ds_missing = ds_results.where(~ds_results.notnull())
-        print(f"Found {ds_missing.size} missing values for model {model_name}")
-        
-        # Process each missing value
-        for site_name, sample_name, ploid_idx in tqdm(ds_missing, 
-                                                      desc=f"Processing {model_name}"):
-            # Get site index
-            site_idx = site_ds.rows.filter(pl.col("site_name") == site_name)["site_idx"][0]
-            sample_idx = site_ds.dataset.samples.index(sample_name)
+        for site in tqdm(site_ds.rows.iter_rows(named=True),
+                        total=site_ds.n_rows,
+                        desc="Iterating over sites"):
+            site_idx = site['site_idx']
+            site_name = site["site_name"]
             
-            # Get the WT haplotype
-            haps_wt = GVL.get_wt_haps(site_ds, sample_idx)
+            # Skip the first row in sites (WT)
+            if site_idx == 0:
+                continue
+
+            # Iterate over each sample
+            for sample_idx, sample_name in tqdm(enumerate(all_samples),
+                                                total=len(all_samples),
+                                                desc="Iterating over samples",
+                                                leave=False): 
+                # Get region ID(s) that the site falls within
+                # region_idx = site_ds.rows[sample_idx, "region_idx"]
+                
+                # Iterate over ploidy
+                for ploid_idx in all_ploid:
+                    # Skip if the value is already set
+                    current_value = ds_results[model_name].sel(site=site_name,
+                                                            sample=sample_name, 
+                                                            ploid=ploid_idx, 
+                                                            #    slot="VEP"
+                                                            )
+                    if current_value.notnull().any() and not force:
+                        continue  
+
+                    # Extract and convert sequences
+                    ## Get the wildtype (wt) sequence
+                    seq_wt = GVL.get_wt_haps(site_ds=site_ds, 
+                                            sample_idx=sample_idx,
+                                            ploid_idx=ploid_idx, 
+                                            as_str=True)
+                    ## Get the mutated (mut) sequence
+                    seq_mut = GVL.get_mut_haps(site_ds=site_ds, 
+                                            site_idx=site_idx,
+                                            sample_idx=sample_idx,
+                                            ploid_idx=ploid_idx, 
+                                            as_str=True)           
+                    # Run the model
+                    if verbose:
+                        print(f"Running VEP: {model_name}, {site_name}, {sample_name}, {ploid_idx}")
+                    vep = run_vep(model_name=model_name,
+                                    model=model,
+                                    tokenizer=tokenizer,
+                                    seq_wt=seq_wt, 
+                                    seq_mut=seq_mut)
+                    
+                    # Store only the relevant VEP results
+                    for k,v in vep.items():
+                        # Only assign valid slot types
+                        if k in ds_results[model_name].coords['slot'].values:        
+                            ds_results[model_name].loc[
+                                dict(site=site_name,
+                                    sample=sample_name, 
+                                    ploid=ploid_idx, 
+                                    slot=k)
+                                    ] = v
+                            
+                    # Save after each ploid is complete
+                    if update_frequency=="ploid":
+                        update_xarray_dataset(ds=ds_results, 
+                                              zarr_path=zarr_path,
+                                              verbose=verbose)
             
-            # Get the mutated sequence
-            haps_mut, flags = site_ds[site_idx, sample_idx]
-            
-            # Get sequences for this ploidy
-            seq_wt = haps_wt[ploid_idx]
-            seq_mut = haps_mut.haps[ploid_idx]
-            
-            # Run the model
-            vep = run_vep(model_name=model_name,
-                            model=model,
-                            tokenizer=tokenizer,
-                            seq_wt=seq_wt, 
-                            seq_mut=seq_mut)
-            
-       
-            
-            # --- Limit the number of samples and sites to run for testing --- #
-            if sample_limit is not None and sample_idx > sample_limit:
+                # --- Limit the number of samples and sites to run for testing --- #
+                if sample_limit is not None and sample_idx>sample_limit:
+                    break
+            if site_limit is not None and site_idx>site_limit:
                 break
-        if site_limit is not None and site_idx > site_limit:
-            break
+
+    # Return the results as an xarray dataset
+    return ds_results
             
-    return ds_results 
 
 def init_or_load_xarray_dataset(zarr_path,  
                                 models, 
@@ -118,7 +171,7 @@ def init_or_load_xarray_dataset(zarr_path,
      # Define the Dataset variables
     all_samples = site_ds.dataset.samples
     all_sites = site_ds.rows[1:]["site_name"].to_list() # Skip the first row (WT)
-    all_ploid = [0,1] 
+    all_ploid = [0,1] # Humans are diploid, so they have two haplotypes
     dims = ['site', 'sample', 'ploid', 'slot']
     
     if zarr_path is not None:
@@ -157,7 +210,7 @@ def init_or_load_xarray_dataset(zarr_path,
         )
     
     # Create the xarray dataset
-    print(f"Creating xarray dataset with {len(data_vars)} models")
+    print(f"Creating xarray dataset with {len(data_vars)} model(s)")
     ds = xr.Dataset(data_vars=data_vars, **kwargs)
     
     # Save to zarr file
@@ -189,9 +242,13 @@ def update_xarray_dataset(ds,
     Returns:    
         None
     """
-    if verbose:
-        print(f"Updating zarr ==> {zarr_path}")
-    ds.to_zarr(zarr_path, mode=mode)
+    if zarr_path is not None:
+        if verbose:
+            print(f"Updating zarr ==> {zarr_path}")
+        ds.to_zarr(zarr_path, mode=mode)
+    else:
+        if verbose:
+            print("No zarr path provided, skipping update")
 
 def run_vep(model_name, 
             seq_wt, 

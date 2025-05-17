@@ -276,3 +276,15 @@ def get_device():
     """
     import torch
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def device_to_str(device):
+    """
+    Convert a torch.device to a string.
+    """
+    import torch
+    if isinstance(device, torch.device):
+        return device.type
+    elif isinstance(device, str):
+        return device
+    else:
+        raise ValueError(f"Invalid device: {device}. Must be either a torch.device or a string.")
