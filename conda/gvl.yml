@@ -1,0 +1,10 @@
+name: gvl
+channels:
+  - conda-forge
+dependencies: 
+  - python<3.13,>=3.10
+  - ipykernel 
+  - xarray
+  - pip
+  - pip:
+    - git+https://github.com/mcvickerlab/GenVarLoader.git

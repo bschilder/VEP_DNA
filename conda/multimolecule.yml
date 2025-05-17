@@ -1,0 +1,8 @@
+name: multimolecule
+channels:
+  - conda-forge
+dependencies: 
+  - ipykernel 
+  - pip
+  - pip:
+    - multimolecule

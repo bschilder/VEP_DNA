@@ -1,0 +1,13 @@
+name: spliceai
+channels:
+  - conda-forge
+  - nodefaults
+dependencies: 
+  - python<3.13,>=3.10
+  - ipykernel 
+  - tensorflow>=1.2.0
+  - xarray
+  - pip
+  - pip:
+    - spliceai
+    - git+https://github.com/mcvickerlab/GenVarLoader.git
