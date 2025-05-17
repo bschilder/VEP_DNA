@@ -53,7 +53,6 @@ def load_tokenizer(model_name):
         
     return _load_tokenizer()
 
-
 def logits_to_prob(logits,
                    framework="torch"):
     """

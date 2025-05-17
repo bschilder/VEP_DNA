@@ -284,3 +284,34 @@ def get_wt_haps(site_ds, sample_idx=None):
     """
     wt_haps = site_ds.dataset[site_ds.rows[0, "region_idx"], sample_idx].haps
     return wt_haps
+
+
+def add_site_name(site_ds, force=False):
+    """
+    Add a site_name column to the site_ds.rows dataframe.
+
+    Parameters:
+        site_ds (Dataset): The dataset containing the haplotypes
+        force (bool): Whether to force the addition of the site_name column
+        
+    Returns:
+        None
+
+    Example:
+        >>> add_site_name(site_ds)
+        >>> site_ds.rows
+    """
+    # Check if the site_name column already exists
+    if "site_name" in site_ds.rows.columns:
+        if force is True:
+            site_ds.rows = site_ds.rows.drop("site_name")
+
+    # Add the site_name column
+    if "site_name" not in site_ds.rows.columns:
+        site_ds.rows = site_ds.rows.with_columns(
+            (pl.lit("chr") + pl.col("chrom") + pl.lit(":") + 
+            pl.col("chromStart").cast(pl.Utf8) + pl.lit("-") + 
+            pl.col("chromEnd").cast(pl.Utf8)).alias("site_name") +
+            pl.lit("_") + pl.col("REF") +
+            pl.lit("_") + pl.col("ALT")
+        )
