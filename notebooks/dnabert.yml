@@ -1,0 +1,13 @@
+name: dnabert
+channels:
+    - conda-forge
+dependencies:
+    - pandas
+    - numpy
+    - torch
+    - IProgress
+    - ipywidgets
+    - biopython
+    - plotly
+    - seaborn
+    - pip
