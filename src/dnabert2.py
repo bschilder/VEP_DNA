@@ -51,3 +51,5 @@ def run_vep(seq_wt, seq_mut, model=None, tokenizer=None):
     cos = torch.nn.CosineSimilarity(dim=0)
     cosine_distance = 1 - cos(embedding_wt, embedding_mut)
     results['cosine_distance'] = cosine_distance.item()
+
+    return results

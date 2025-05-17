@@ -9,10 +9,6 @@ DEFAULT_MODEL_NAME = "johahi/flashzoi-replicate-0"
 def _get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def load_model(model_name=DEFAULT_MODEL_NAME):
-    return Borzoi.from_pretrained(model_name)
-
-# ─── HELPERS ─────────────────────────────────────────────────────────
 def one_hot_seq(seq: str) -> np.ndarray:
     mapping = {'A':0,'C':1,'G':2,'T':3}
     arr = np.zeros((4, len(seq)), dtype=np.float32)
@@ -21,6 +17,9 @@ def one_hot_seq(seq: str) -> np.ndarray:
         if idx is not None:
             arr[idx, i] = 1.0
     return arr
+
+def load_model(model_name=DEFAULT_MODEL_NAME):
+    return Borzoi.from_pretrained(model_name)
 
 def load_tokenizer(model_name=DEFAULT_MODEL_NAME):
     return one_hot_seq
