@@ -1,10 +1,7 @@
 import numpy as np
-
 from tqdm import tqdm
-from typing import List, Optional, Callable
+from typing import Optional, Callable
 
-
-#### ------ Embeddings-based metrics ------ ####
 
 def logits_to_probs(logits, 
                     method: str = "sigmoid", 
@@ -155,7 +152,7 @@ def kl_divergence(logits_wt,
 
 def js_divergence(logits_wt, 
                   logits_mut,
-                  use_probs: bool = True,
+                  use_probs: bool = True, # Values need to be positive
                   method: str = "softmax",
                   axis: int = -1,
                   **kwargs):
@@ -191,10 +188,10 @@ def js_divergence(logits_wt,
 
 
 def prob_diff(logits_wt, 
-             logits_mut,
-             method: str = "log_softmax",
-             axis: int = -1,
-             **kwargs):
+              logits_mut,
+              method: str = "log_softmax",
+              axis: int = -1,
+              **kwargs):
     """
     Calculate the difference between the probabilities of the two sets of logits.
 
