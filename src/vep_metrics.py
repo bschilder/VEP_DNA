@@ -84,6 +84,8 @@ def cosine_sim(logits_wt,
                use_probs: bool = False,
                method: str = "sigmoid",
                axis: int = -1,
+               logits_agg_func: Optional[str] = None,
+               css_agg_func: Optional[str] = "mean",
                **kwargs):
     """
     Calculate the cosine similarity between two sets of logits.
@@ -94,6 +96,8 @@ def cosine_sim(logits_wt,
         use_probs: bool, if True, the logits are converted to probabilities
         method: str, "sigmoid", "softmax", or "log_softmax"
         axis: int, the axis to reduce the logits over
+        logits_agg_func: Optional[str], "mean" or "sum"
+        css_agg_func: Optional[str], "mean" or "sum"
         **kwargs: additional arguments for the cosine similarity loss function
     
     Returns:
@@ -103,15 +107,45 @@ def cosine_sim(logits_wt,
     import torch
     _css = torch.nn.CosineSimilarity(**kwargs)
 
+    if isinstance(logits_wt, np.ndarray):
+        logits_wt = torch.from_numpy(logits_wt)
+    if isinstance(logits_mut, np.ndarray):
+        logits_mut = torch.from_numpy(logits_mut)
+
     if use_probs:
-        prob_wt = logits_to_probs(logits_wt, method)
-        prob_mut = logits_to_probs(logits_mut, method)
-        css = _css(prob_wt.mean(axis=axis), 
-                    prob_mut.mean(axis=axis)) 
+        x1 = logits_to_probs(logits_wt, method)
+        x2 = logits_to_probs(logits_mut, method)
+
     else: 
-        css = _css(logits_wt.mean(axis=axis), 
-                    logits_mut.mean(axis=axis))
-        
+        x1 = logits_wt
+        x2 = logits_mut
+
+    if logits_agg_func is not None:
+        print(f"Aggregating each set of logits with func: {logits_agg_func}")
+        if logits_agg_func == "mean":
+            x1 = x1.mean(axis=axis)
+            x2 = x2.mean(axis=axis)
+        elif logits_agg_func == "sum":
+            x1 = x1.sum(axis=axis)
+            x2 = x2.sum(axis=axis)
+        else:
+            raise ValueError(f"Invalid logits_agg_func: {logits_agg_func}")
+    else:
+        print("Computing cosine similarity without aggregating logits")
+
+    css = _css(x1, x2)
+
+    if css_agg_func is not None:
+        print(f"Aggregating cosine similarity vector with func: {css_agg_func}")
+        if css_agg_func == "mean":
+            css = css.mean()
+        elif css_agg_func == "sum":
+            css = css.sum()
+        else:
+            raise ValueError(f"Invalid css_agg_func: {css_agg_func}")
+    else:
+        print("Returning cosine similarity without aggregating cosine similarity vector")
+    
     return css
 
 def kl_divergence(logits_wt, 
