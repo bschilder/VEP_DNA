@@ -1,3 +1,7 @@
+# Source: https://github.com/johahi/borzoi-pytorch
+# NOTES:
+# - If you can trouble with flash-attn, try:  pip install flash-attn==2.6.3 --no-build-isolation
+
 import numpy as np
 import torch
 from torch.amp import autocast
@@ -36,15 +40,13 @@ def score_all_tracks(seq: str,
     if device is None:
         device = ut.get_device()
 
-    # Convert numpy array to torch tensor, 
-    # add batch dimension, 
-    # move to device, 
-    # and convert to float16
-    x = torch.from_numpy(tokenizer(seq)[None]).to(device).half()
+    # Convert numpy array to torch tensor add batch dimension
+    x = torch.from_numpy(one_hot_seq(seq)[None]).to(device) 
+    model.to(device)
     
     # Run the model
     with torch.no_grad(), autocast("cuda", torch.float16):
-        # model(x) shape: (1, n_tissues, L); we take [0]
+        # model(x) shape: (1, n_tissues, L)
         return model(x)
 
 def run_vep(seq_wt, 
@@ -61,11 +63,15 @@ def run_vep(seq_wt,
 
     results = {}
     # WT
-    trks_wt = score_all_tracks(seq_wt, model)
-    trks_wt = trks_wt.cpu().numpy()
+    trks_wt = score_all_tracks(seq=seq_wt, 
+                               model=model, 
+                               tokenizer=tokenizer)
+    trks_wt = trks_wt.squeeze().cpu().numpy()
     # Mut
-    trks_mut = score_all_tracks(seq_mut, model)
-    trks_mut = trks_mut.cpu().numpy()
+    trks_mut = score_all_tracks(seq=seq_mut, 
+                                model=model, 
+                                tokenizer=tokenizer)
+    trks_mut = trks_mut.squeeze().cpu().numpy()
 
     results["delta"] = trks_mut - trks_wt
     results["mean_delta"] = float(results["delta"].mean())

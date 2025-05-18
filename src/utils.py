@@ -299,3 +299,23 @@ def torch_to_numpy(x):
         return x.cpu().numpy()
     else:
         return x
+    
+
+def get_random_sequence(length: int = 100,
+                        alphabet: list = ['A', 'T', 'C', 'G'],
+                        as_bioseq: bool = False
+                        ) -> str:
+    """Generate a random DNA sequence of specified length.
+    
+    Args:
+        length: Length of sequence to generate (default: 100)
+        alphabet: Alphabet to use for the sequence (default: ['A', 'T', 'C', 'G'])
+        as_bioseq: If True, return a Bio.Seq.Seq object (default: False)
+        
+    Returns:
+        Random DNA sequence as string or Bio.Seq.Seq object
+    """
+    seq = ''.join(np.random.choice(alphabet, size=length))
+    if as_bioseq:
+        from Bio.Seq import Seq
+        seq = Seq(seq)
