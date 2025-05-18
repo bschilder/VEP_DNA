@@ -6,5 +6,5 @@ dependencies:
   - python>=3.10,<3.13
   - pip
   - pip:
-      - borzoi-pytorch 
+      - borzoi-pytorch
       - ipykernel
