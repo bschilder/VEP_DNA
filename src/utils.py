@@ -319,3 +319,32 @@ def get_random_sequence(length: int = 100,
     if as_bioseq:
         from Bio.Seq import Seq
         seq = Seq(seq)
+    return seq
+
+def get_mutated_sequence(seq, 
+                         mutations=0.01,
+                         alphabet=['A', 'C', 'G', 'T']):
+    """
+    Mutate a sequence.
+    
+    Args:
+        seq: Sequence to mutate
+        mutations: Number of mutations to make. 
+            If a fraction, it will be interpreted as a fraction of the sequence to mutate.
+        alphabet: Alphabet to use for the sequence
+    
+    Returns:
+        Mutated sequence
+    """
+    seq2 = list(seq)
+    if mutations<1 and mutations>0:
+        print(f"Mutating {mutations*100}% of sequence")
+        # interpret as fraction of sequence to mutate
+        mutations = int(mutations*len(seq2))
+    else:
+        print(f"Mutating {mutations} sequence positions")
+
+    mut_positions = np.random.choice(len(seq2), mutations, replace=False)
+    for pos in mut_positions:
+        seq2[pos] = np.random.choice(alphabet)
+    return ''.join(seq2)

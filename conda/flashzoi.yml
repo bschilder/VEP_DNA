@@ -4,6 +4,9 @@ channels:
   - nodefaults
 dependencies:
   - python>=3.10,<3.13
+  - pooch
+  - scikit-learn
+  # - rapidsai::rapids # Optional
   - pip
   - pip:
       - borzoi-pytorch

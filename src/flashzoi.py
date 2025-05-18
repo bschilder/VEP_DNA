@@ -5,10 +5,14 @@
 import numpy as np
 import torch
 from torch.amp import autocast
+from typing import List
 
 from borzoi_pytorch import Borzoi
 import src.utils as ut
+import src.dimreduction as dr
+import src.utils as utils
 
+# All models: https://huggingface.co/johahi
 DEFAULT_MODEL_NAME = "johahi/flashzoi-replicate-0"
 
 def one_hot_seq(seq: str) -> np.ndarray:
@@ -29,9 +33,18 @@ def load_tokenizer(model_name=DEFAULT_MODEL_NAME):
 def score_all_tracks(seq: str, 
                      model=None, 
                      tokenizer=None,
+                     run_squeeze: bool = True,
                      device=None) -> np.ndarray:
     """
     Score all tracks of a sequence.
+    Args:
+        seq: Sequence to score
+        model: Model to use
+        tokenizer: Tokenizer to use
+        run_squeeze: If True, squeeze the output tensor
+        device: Device to use
+    Returns:
+        np.ndarray: Array of shape (n_tissues,)
     """
     if model is None:
         model = load_model()
@@ -47,12 +60,18 @@ def score_all_tracks(seq: str,
     # Run the model
     with torch.no_grad(), autocast("cuda", torch.float16):
         # model(x) shape: (1, n_tissues, L)
-        return model(x)
+        trks = model(x)
+        if run_squeeze:
+            return trks.squeeze()
+        else:
+            return trks
 
 def run_vep(seq_wt, 
             seq_mut, 
             model=None, 
-            tokenizer=None):
+            tokenizer=None,
+            run_squeeze: bool = True,
+            run_pca: bool = False):
     """
     Run the VEP pipeline on a sequence.
     """
@@ -65,17 +84,69 @@ def run_vep(seq_wt,
     # WT
     trks_wt = score_all_tracks(seq=seq_wt, 
                                model=model, 
-                               tokenizer=tokenizer)
-    trks_wt = trks_wt.squeeze().cpu().numpy()
+                               tokenizer=tokenizer,
+                               run_squeeze=run_squeeze)
     # Mut
     trks_mut = score_all_tracks(seq=seq_mut, 
                                 model=model, 
-                                tokenizer=tokenizer)
-    trks_mut = trks_mut.squeeze().cpu().numpy()
+                                tokenizer=tokenizer,
+                                run_squeeze=run_squeeze)    
 
     results["delta"] = trks_mut - trks_wt
-    results["mean_delta"] = float(results["delta"].mean())
+    results["delta_mean"] = float(results["delta"].mean())
+    results["delta_abs_mean"] = float(results["delta"].abs().mean())
+
+    if run_pca:
+        pca = dr.pca_sklearn(results["delta"])
+        results["pca"] = pca
 
     return results
 
- 
+def load_targets(species: List[str] = ["human","mouse"],
+                 top_n_tissues: int = 10):
+    """
+    Load the targets (track names and metadata) for the Borzoi/Flashzoi models.
+    Data source: https://github.com/calico/borzoi/tree/main/data
+
+    Args:
+        species: List of species to load (human, mouse)
+    
+    Returns:
+        pd.DataFrame: DataFrame with track names and metadata
+
+    Example:
+        targets = load_targets()
+        targets.groupby("species")["identifier"].count()
+    """
+    import pooch
+    import pandas as pd
+    species = utils.as_list(species)
+
+    paths = {
+        "human": {
+            "path": "https://github.com/calico/borzoi/raw/refs/heads/main/data/targets_human.txt.gz",
+            "known_hash": "8f67ef43b914e42d7a7dafb8d621190cafe84a167bc4c9eb1aa781ee694d6d32"
+        },
+        "mouse": {
+            "path": "https://github.com/calico/borzoi/raw/refs/heads/main/data/targets_mouse.txt.gz",
+            "known_hash": "135978632577499c1932b3dd8b44fa9f9554556ca827217278670a5be529283c"
+        }
+    }
+    targets = []
+    for species in species:
+        targets.append(pd.read_csv(
+            pooch.retrieve(paths[species]["path"],
+                known_hash=paths[species]["known_hash"]),
+            sep="\t",
+            index_col=0
+        ).assign(species=species)
+        )
+    targets = pd.concat(targets)
+    targets["source"] = targets["file"].str.split("/").str[7]
+    targets["assay"] = targets["description"].str.split(":").str[0]
+    targets["tissue"] = targets["description"].str.split(":",n=1).str[1]
+    
+    top_tissues = targets["tissue"].value_counts().head(top_n_tissues).index
+    targets["top_tissue"] = targets["tissue"].apply(lambda x: x if x in top_tissues else "other")
+    
+    return targets
