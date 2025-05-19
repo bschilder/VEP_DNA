@@ -424,6 +424,9 @@ def get_model_to_metric_map():
         "spliceai": ["VEP_donor","VEP_acceptor"],
         "spliceai_mm": ["VEP_donor","VEP_acceptor"],
         "flashzoi": ["delta_mean","delta_abs_mean","delta_pca_tracks_mean"],
-        "evo2-7b": ["VEP"],
+        "evo2_7b": ["VEP"],
+        "evo2_40b": ["VEP"],
+        "evo2_7b_base": ["VEP"],
+        "evo2_40b_base": ["VEP"],
         "dnabert2": ["VEP"]
     }
