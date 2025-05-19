@@ -290,17 +290,6 @@ def device_to_str(device):
         raise ValueError(f"Invalid device: {device}. Must be either a torch.device or a string.")
     
 
-def torch_to_numpy(x):
-    """
-    Convert a torch.Tensor to a numpy.ndarray.
-    """
-    import torch
-    if isinstance(x, torch.Tensor):
-        return x.cpu().numpy()
-    else:
-        return x
-    
-
 def get_random_sequence(length: int = 100,
                         alphabet: list = ['A', 'T', 'C', 'G'],
                         as_bioseq: bool = False
@@ -368,5 +357,28 @@ def as_tf_tensor(x):
     import tensorflow as tf
     if isinstance(x, tf.Tensor):
         return x
-    elif isinstance(x, np.ndarray):
+    if isinstance(x, np.ndarray):
         return tf.convert_to_tensor(x)
+    
+
+
+def as_numpy(x):
+    """
+    Convert a torch.Tensor to a numpy.ndarray.
+    """
+    
+    if isinstance(x, np.ndarray):
+        return x
+    
+    import torch
+    if isinstance(x, torch.Tensor):
+        return x.cpu().numpy()
+    
+    import importlib.util
+    if importlib.util.find_spec("tensorflow") is not None:
+        import tensorflow as tf
+        if isinstance(x, tf.Tensor):
+            return x.numpy()
+    
+    return x
+    

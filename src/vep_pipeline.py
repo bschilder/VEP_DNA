@@ -5,19 +5,21 @@ import polars as pl
 import numpy as np
 from tqdm.auto import tqdm
 import src.utils as utils
-
+import time
 import src.genvarloader as GVL
 
-def run_vep_pipeline(site_ds, 
-                     models, 
-                     ds_results=None,
-                     zarr_path=None,
-                     sample_limit=None,
-                     site_limit=None,
-                     force=False,
-                     update_frequency="ploid",
-                     device=None,
-                     verbose=True):
+def vep_pipeline(site_ds, 
+                 models, 
+                #  cohort=None,
+                #  sites_set=None,
+                 ds_results=None,
+                 zarr_path=None,
+                 sample_limit=None,
+                 site_limit=None,
+                 force=False,
+                 checkpoint_frequency="site",
+                 device=None,
+                 verbose=True):
     """
     Run the VEP pipeline on a dataset.
     
@@ -29,7 +31,11 @@ def run_vep_pipeline(site_ds,
         force (bool): If True, overwrite existing results.
         sample_limit (int): Maximum number of samples to run.
         site_limit (int): Maximum number of sites to run.
-        update_frequency (str): Frequency to update the dataset.
+        checkpoint_frequency (str): Frequency to checkpoint the dataset.
+            In terms of frequency: site << sample < ploid
+            "site": Save after each site is complete
+            "sample": Save after each sample is complete
+            "ploid": Save after each ploid is complete 
         verbose (bool): If True, print verbose output.
         device (str): Device to run the model on.
     """ 
@@ -48,7 +54,10 @@ def run_vep_pipeline(site_ds,
     all_ploid = ds_results.coords["ploid"].values.tolist()
 
     # Iterate over models
-    for model_name in models:
+    for model_name in tqdm(models, 
+                           desc="Iterating over models",
+                           disable=verbose<0,
+                           leave=False):
         
         # Load the model
         model_name = model_name.lower()
@@ -67,10 +76,17 @@ def run_vep_pipeline(site_ds,
         tokenizer = load_tokenizer(model_name)
 
         for site in tqdm(site_ds.rows.iter_rows(named=True),
-                        total=site_ds.n_rows,
-                        desc="Iterating over sites"):
+                         total=site_ds.n_rows,
+                         desc="Iterating over sites",
+                         disable=verbose<0,
+                         leave=False):
             site_idx = site['site_idx']
             site_name = site["site_name"]
+            chrom = f'chr{str(site["chrom"]).replace("chr","")}'
+
+            # --- Limit the number of sites for testing --- #
+            if site_limit is not None and site_idx>site_limit:
+                break
             
             # Skip the first row in sites (WT)
             if site_idx == 0:
@@ -80,16 +96,25 @@ def run_vep_pipeline(site_ds,
             for sample_idx, sample_name in tqdm(enumerate(all_samples),
                                                 total=len(all_samples),
                                                 desc="Iterating over samples",
-                                                leave=False): 
+                                                disable=verbose<1,
+                                                leave=False):
+
+                # --- Limit the number of samples for testing --- #
+                if sample_limit is not None and sample_idx>sample_limit:
+                    break
+
                 # Get region ID(s) that the site falls within
                 # region_idx = site_ds.rows[sample_idx, "region_idx"]
                 
                 # Iterate over ploidy
-                for ploid_idx in all_ploid:
+                for ploid_idx, ploid_name in enumerate(all_ploid):
+
+                    start_time = time.time()
+
                     # Skip if the value is already set
                     current_value = ds_results[model_name].sel(site=site_name,
                                                             sample=sample_name, 
-                                                            ploid=ploid_idx, 
+                                                            ploid=ploid_name, 
                                                             #    slot="VEP"
                                                             )
                     if current_value.notnull().any() and not force:
@@ -98,54 +123,97 @@ def run_vep_pipeline(site_ds,
                     # Extract and convert sequences
                     ## Get the wildtype (wt) sequence
                     seq_wt = GVL.get_wt_haps(site_ds=site_ds, 
-                                            sample_idx=sample_idx,
-                                            ploid_idx=ploid_idx, 
-                                            as_str=True)
+                                             sample_idx=sample_idx,
+                                             ploid_idx=ploid_idx, 
+                                             as_str=True)
                     ## Get the mutated (mut) sequence
                     seq_mut = GVL.get_mut_haps(site_ds=site_ds, 
-                                            site_idx=site_idx,
-                                            sample_idx=sample_idx,
-                                            ploid_idx=ploid_idx, 
-                                            as_str=True)           
+                                               site_idx=site_idx,
+                                               sample_idx=sample_idx,
+                                               ploid_idx=ploid_idx, 
+                                               as_str=True)           
                     # Run the model
-                    if verbose:
+                    if verbose>1:
                         print(f"Running VEP: {model_name}, {site_name}, {sample_name}, {ploid_idx}")
+                    
+                    # Run the VEP
+                    run_vep_start_time = time.time()
                     vep = run_vep(model_name=model_name,
                                     model=model,
                                     tokenizer=tokenizer,
                                     seq_wt=seq_wt, 
                                     seq_mut=seq_mut)
-                    
+                    run_vep_end_time = time.time()
                     # Store only the relevant VEP results
                     for k,v in vep.items():
                         # Only assign valid slot types
                         if k in ds_results[model_name].coords['slot'].values:        
                             ds_results[model_name].loc[
+                                dict( 
+                                    # cohort=cohort,
+                                    # chrom=chrom,
+                                    # sites_set=sites_set,
+                                    site=site_name,
+                                    sample=sample_name, 
+                                    ploid=ploid_name, 
+                                    slot=k)
+                                    ] = utils.as_numpy(v)
+                            
+                    # Get the extra slots data
+                    extra_slots = {"time_total":time.time()-start_time,
+                                   "time_run_vep":run_vep_end_time-run_vep_start_time,
+                                #    "timestamp":time.strftime("%Y-%m-%d %H:%M:%S"),
+                                   "output_length":site_ds.dataset.output_length,
+                                   "len_seq_wt":len(seq_wt),
+                                   "len_seq_mut":len(seq_mut)}
+                    
+                    # Add the extra slots to the dataset
+                    for k,v in extra_slots.items():
+                        if v is not None:
+                            ds_results[model_name].loc[
                                 dict(site=site_name,
                                     sample=sample_name, 
-                                    ploid=ploid_idx, 
+                                    ploid=ploid_name, 
                                     slot=k)
-                                    ] = utils.torch_to_numpy(v)
-                            
+                                ] = v
+
                     # Save after each ploid is complete
-                    if update_frequency=="ploid":
+                    if checkpoint_frequency=="ploid":
                         update_xarray_dataset(ds=ds_results, 
                                               zarr_path=zarr_path,
-                                              verbose=verbose)
-            
-                # --- Limit the number of samples and sites to run for testing --- #
-                if sample_limit is not None and sample_idx>sample_limit:
-                    break
-            if site_limit is not None and site_idx>site_limit:
-                break
+                                              verbose=verbose>1) 
+                # Save after each sample is complete
+                if checkpoint_frequency=="sample":
+                    update_xarray_dataset(ds=ds_results, 
+                                          zarr_path=zarr_path,
+                                          verbose=verbose>1)
+            # Save after each site is complete
+            if checkpoint_frequency=="site":
+                update_xarray_dataset(ds=ds_results, 
+                                      zarr_path=zarr_path,
+                                      verbose=verbose>1) 
 
     # Return the results as an xarray dataset
     return ds_results
             
 
 def init_or_load_xarray_dataset(zarr_path,  
-                                models, 
                                 site_ds,
+                                all_models=None, 
+                                # all_cohorts=None,
+                                # all_chrom=None,
+                                # all_sites_sets=None,
+                                all_sites=None,
+                                all_samples=None,
+                                all_ploid=None,
+                                all_slots=None,
+                                extra_slots=["time_total",
+                                             "time_run_vep",
+                                             "timestamp",
+                                             "output_length",
+                                             "len_seq_wt",
+                                             "len_seq_mut"
+                                             ],
                                 force=False,
                                 mode="w",
                                 **kwargs):
@@ -154,8 +222,8 @@ def init_or_load_xarray_dataset(zarr_path,
     
     Parameters:
         zarr_path (str): Path to the zarr store
-        models (list): List of model names
-        all_sites (list): List of site names
+        all_models (list): List of model names
+        all_sites (list): List of site n    ames
         all_samples (list): List of sample names
         all_ploid (list): List of ploidy values
         all_slots (list): List of slot names
@@ -168,11 +236,37 @@ def init_or_load_xarray_dataset(zarr_path,
     import numpy as np
     import os
 
-     # Define the Dataset variables
-    all_samples = site_ds.dataset.samples
-    all_sites = site_ds.rows[1:]["site_name"].to_list() # Skip the first row (WT)
-    all_ploid = [0,1] # Humans are diploid, so they have two haplotypes
-    dims = ['site', 'sample', 'ploid', 'slot']
+    # Define the Dataset variables
+    ### NOTE: Adding too many dimensions will cause the dataset to be very large 
+    ### and thus take a long time to initialize and postprocess.
+    
+    if all_models is None:
+        all_models = list(get_model_to_metric_map().keys())
+
+    # if all_cohorts is None:
+    #     all_cohorts = ["1000_Genomes_30x_on_GRCh38",
+    #                    "1000_Genomes_on_GRCh38",
+    #                    "Human_Genome_Diversity_Project",
+    #                    "All_Of_Us_srWGS",
+    #                    "All_Of_Us_lrWGS"]
+    # if all_sites_sets is None:
+    #     all_sites_sets = ["clinvar_utr","splicevardb"]
+    # if all_chrom is None:
+    #     all_chrom = [f"chr{chr}" for chr in [*range(1,23), "X", "Y"]]
+    if all_sites is None:
+        all_sites = site_ds.rows[1:]["site_name"].to_list() # Skip the first row (WT)
+    if all_samples is None:
+        all_samples = site_ds.dataset.samples
+    if all_ploid is None:
+        all_ploid = ["0","1"] # Humans are diploid, so they have two haplotypes
+        
+    dims = [# 'cohort',
+            # 'sites_set',
+            # 'chrom',
+            'site', 
+            'sample', 
+            'ploid', 
+            'slot']
     
     if zarr_path is not None:
         # Create directory if it doesn't exist
@@ -189,16 +283,23 @@ def init_or_load_xarray_dataset(zarr_path,
         
     # Initialize the data arrays
     data_vars = {}
-    for model_name in tqdm(models, 
+    for model_name in tqdm(all_models, 
                            desc="Initializing data arrays",
                            leave=False):
-        all_slots = get_model_to_metric_map()[model_name]
+        
+        # Get the slots for the model
+        all_slots = get_model_to_metric_map()[model_name] + extra_slots
+        
         # Create a numpy array with dimensions [sites, samples, ploidy, slots]
-        data_array = np.empty((len(all_sites), 
-                             len(all_samples), 
-                             len(all_ploid), 
-                             len(all_slots)), 
-                             dtype=object)
+        data_array = np.empty((
+            # len(all_cohorts),
+            # len(all_sites_sets),
+            # len(all_chrom),
+            len(all_sites), 
+            len(all_samples), 
+            len(all_ploid), 
+            len(all_slots)), 
+            dtype=object)
         # Fill with None values
         # data_array.fill(None)
         
@@ -206,7 +307,15 @@ def init_or_load_xarray_dataset(zarr_path,
         data_vars[model_name] = xr.DataArray(
             data_array,
             dims=dims,
-            coords=dict(zip(dims, [all_sites, all_samples, all_ploid, all_slots]))
+            coords=dict(zip(dims, [ 
+                                #    all_cohorts, 
+                                #    all_sites_sets, 
+                                #    all_chrom, 
+                                   all_sites, 
+                                   all_samples, 
+                                   all_ploid, 
+                                   all_slots])
+            )
         )
     
     # Create the xarray dataset
@@ -314,7 +423,7 @@ def get_model_to_metric_map():
     return {
         "spliceai": ["VEP_donor","VEP_acceptor"],
         "spliceai_mm": ["VEP_donor","VEP_acceptor"],
-        "flashzoi": ["VEP"],
+        "flashzoi": ["delta_mean","delta_abs_mean","delta_pca_tracks_mean"],
         "evo2-7b": ["VEP"],
         "dnabert2": ["VEP"]
     }

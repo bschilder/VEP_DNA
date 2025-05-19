@@ -107,7 +107,7 @@ def run_vep(seq_wt,
                                 # dim=0 returns compute cos sim along the track axis
                                 # dim=1 returns compute cos sim along the 100PC axis
                                 dim=0 )
-        results["delta_pca_tracks"] = css_pca
+        results["delta_pca_tracks_mean"] = css_pca.mean()
 
     return results
 
