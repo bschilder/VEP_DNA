@@ -11,6 +11,7 @@ from borzoi_pytorch import Borzoi
 import src.utils as ut
 import src.dimreduction as dr
 import src.utils as utils
+import src.vep_metrics as vm
 
 # All models: https://huggingface.co/johahi
 DEFAULT_MODEL_NAME = "johahi/flashzoi-replicate-0"
@@ -97,8 +98,16 @@ def run_vep(seq_wt,
     results["delta_abs_mean"] = float(results["delta"].abs().mean())
 
     if run_pca:
-        pca = dr.pca_sklearn(results["delta"])
-        results["pca"] = pca
+        # Compute cosine similarity between the PCA eigenvectors of the WT and MUT tracks
+        # along the track axis
+        pca =  dr.pca_sklearn(torch.concat([trks_wt,trks_mut], axis=1).cpu())
+        css_pca = vm.cosine_sim(pca["eigenvectors"][:,1:trks_wt.shape[1]],
+                                pca["eigenvectors"][:,trks_wt.shape[1]+1:],
+                                css_agg_func=None, 
+                                # dim=0 returns compute cos sim along the track axis
+                                # dim=1 returns compute cos sim along the 100PC axis
+                                dim=0 )
+        results["delta_pca_tracks"] = css_pca
 
     return results
 

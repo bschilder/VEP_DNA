@@ -348,3 +348,25 @@ def get_mutated_sequence(seq,
     for pos in mut_positions:
         seq2[pos] = np.random.choice(alphabet)
     return ''.join(seq2)
+
+def as_torch_tensor(x):
+    """
+    Convert a numpy.ndarray to a torch.Tensor.
+    """
+    import torch
+    if isinstance(x, torch.Tensor):
+        return x
+    elif isinstance(x, np.ndarray):
+        return torch.from_numpy(x)
+    else:
+        raise ValueError(f"Invalid input: {x}. Must be a numpy.ndarray or a torch.Tensor.")
+    
+def as_tf_tensor(x):
+    """
+    Convert a numpy.ndarray to a tensorflow.Tensor.
+    """
+    import tensorflow as tf
+    if isinstance(x, tf.Tensor):
+        return x
+    elif isinstance(x, np.ndarray):
+        return tf.convert_to_tensor(x)

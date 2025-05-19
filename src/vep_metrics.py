@@ -1,6 +1,7 @@
 import numpy as np
 from tqdm import tqdm
 from typing import Optional, Callable
+import src.utils as utils
 
 
 def logits_to_probs(logits, 
@@ -39,9 +40,9 @@ def logits_to_probs(logits,
         import torch
 
         # Convert array to torch tensor
-        if isinstance(logits, np.ndarray):
-            logits = torch.from_numpy(logits)
+        logits = utils.as_torch_tensor(logits)
     
+        # Convert to probabilities
         if method == "sigmoid":
             probs =  torch.sigmoid(logits)
         elif method == "softmax":
@@ -50,12 +51,12 @@ def logits_to_probs(logits,
             probs = torch.log_softmax(logits, dim=-1)
         else:
             raise ValueError(f"Invalid method: {method}")
+    
     elif framework == "tensorflow":
         import tensorflow as tf
 
         # Convert array to tf tensor
-        if isinstance(logits, np.ndarray):
-            logits = tf.convert_to_tensor(logits)
+        logits = utils.as_tf_tensor(logits)
 
         if method == "sigmoid":
             probs = tf.sigmoid(logits)
@@ -79,13 +80,14 @@ def logits_to_probs(logits,
         raise ValueError(f"Invalid reduction: {reduction}")
  
 
-def cosine_sim(logits_wt, 
-               logits_mut,
+def cosine_sim(logits_wt: np.ndarray, 
+               logits_mut: np.ndarray,
                use_probs: bool = False,
                method: str = "sigmoid",
                axis: int = -1,
                logits_agg_func: Optional[str] = None,
                css_agg_func: Optional[str] = "mean",
+               verbose: bool = True,
                **kwargs):
     """
     Calculate the cosine similarity between two sets of logits.
@@ -98,6 +100,7 @@ def cosine_sim(logits_wt,
         axis: int, the axis to reduce the logits over
         logits_agg_func: Optional[str], "mean" or "sum"
         css_agg_func: Optional[str], "mean" or "sum"
+        verbose: bool, if True, print verbose output
         **kwargs: additional arguments for the cosine similarity loss function
     
     Returns:
@@ -107,21 +110,22 @@ def cosine_sim(logits_wt,
     import torch
     _css = torch.nn.CosineSimilarity(**kwargs)
 
-    if isinstance(logits_wt, np.ndarray):
-        logits_wt = torch.from_numpy(logits_wt)
-    if isinstance(logits_mut, np.ndarray):
-        logits_mut = torch.from_numpy(logits_mut)
+    # Convert to torch tensors
+    logits_wt = utils.as_torch_tensor(logits_wt)
+    logits_mut = utils.as_torch_tensor(logits_mut)
 
+    # Convert to probabilities
     if use_probs:
         x1 = logits_to_probs(logits_wt, method)
         x2 = logits_to_probs(logits_mut, method)
-
     else: 
         x1 = logits_wt
         x2 = logits_mut
 
+    # Aggregate logits
     if logits_agg_func is not None:
-        print(f"Aggregating each set of logits with func: {logits_agg_func}")
+        if verbose:
+            print(f"Aggregating each set of logits with func: {logits_agg_func}")
         if logits_agg_func == "mean":
             x1 = x1.mean(axis=axis)
             x2 = x2.mean(axis=axis)
@@ -131,20 +135,25 @@ def cosine_sim(logits_wt,
         else:
             raise ValueError(f"Invalid logits_agg_func: {logits_agg_func}")
     else:
-        print("Computing cosine similarity without aggregating logits")
+        if verbose:
+            print("Computing cosine similarity without aggregating logits")
 
+    # Compute cosine similarity
     css = _css(x1, x2)
 
+    # Aggregate cosine similarity
     if css_agg_func is not None:
-        print(f"Aggregating cosine similarity vector with func: {css_agg_func}")
+        if verbose:
+            print(f"Aggregating cosine similarity vector with func: {css_agg_func}")
         if css_agg_func == "mean":
             css = css.mean()
         elif css_agg_func == "sum":
             css = css.sum()
         else:
             raise ValueError(f"Invalid css_agg_func: {css_agg_func}")
-    else:
-        print("Returning cosine similarity without aggregating cosine similarity vector")
+    else:   
+        if verbose:
+            print("Returning cosine similarity without aggregating cosine similarity vector")
     
     return css
 
