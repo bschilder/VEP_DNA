@@ -9,7 +9,7 @@ import time
 import src.genvarloader as GVL
 
 def vep_pipeline(site_ds, 
-                 models, 
+                 all_models, 
                 #  cohort=None,
                 #  sites_set=None,
                  ds_results=None,
@@ -25,7 +25,7 @@ def vep_pipeline(site_ds,
     
     Parameters:
         site_ds: Dataset with sites
-        models (list): List of model names to run
+        all_models (list): List of model names to run
         results_dir (str): Directory to store results
         variant_set (str): Name of the variant set
         force (bool): If True, overwrite existing results.
@@ -44,7 +44,7 @@ def vep_pipeline(site_ds,
     if ds_results is None:
         ds_results = init_or_load_xarray_dataset(
             zarr_path=zarr_path,
-            models=models, 
+            all_models=all_models, 
             site_ds=site_ds,
             force=force>1
         )
@@ -54,7 +54,7 @@ def vep_pipeline(site_ds,
     all_ploid = ds_results.coords["ploid"].values.tolist()
 
     # Iterate over models
-    for model_name in tqdm(models, 
+    for model_name in tqdm(all_models, 
                            desc="Iterating over models",
                            disable=verbose<0,
                            leave=False):
