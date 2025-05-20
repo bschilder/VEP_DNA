@@ -216,3 +216,28 @@ def bed_to_sites(bed):
         *[col for col in sites.columns if col not in ['CHROM', 'POS', 'REF', 'ALT']]
     ])
     return sites
+
+
+def read_bed(path, 
+             schema_overrides=None,
+             separator='\t',
+             **kwargs):
+    """
+    Read a BED file created by the clinvar submodule for usew with GenVarloader.
+    """
+
+    if schema_overrides is None:
+        schema_overrides = {
+            'chrom': pl.Utf8,
+            'chromStart': pl.Int64,
+            'chromEnd': pl.Int64,
+            'score': pl.Float64
+        }
+    # Import bed file
+    bed = pl.read_csv(
+        path,
+        schema_overrides=schema_overrides,
+        separator=separator,
+        **kwargs
+    ).drop_nulls(subset=['ALT'])
+    return bed

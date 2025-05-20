@@ -14,8 +14,8 @@ def vep_pipeline(site_ds,
                  all_models, 
                 #  cohort=None,
                 #  sites_set=None,
-                 ds_results=None,
-                 zarr_path=None,
+                 xr_ds=None,
+                 xr_ds_path=None,
                  sample_limit=None,
                  site_limit=None,
                  force=False,
@@ -28,9 +28,8 @@ def vep_pipeline(site_ds,
     Parameters:
         site_ds: Dataset with sites
         all_models (list): List of model names to run
-        results_dir (str): Directory to store results
-        variant_set (str): Name of the variant set
-        force (bool): If True, overwrite existing results.
+        xr_ds (xarray.Dataset): Dataset to store results
+        xr_ds_path (str): Path to the zarr store
         sample_limit (int): Maximum number of samples to run.
         site_limit (int): Maximum number of sites to run.
         checkpoint_frequency (str): Frequency to checkpoint the dataset.
@@ -43,9 +42,9 @@ def vep_pipeline(site_ds,
     """ 
 
     # Initialize or load the dataset
-    if ds_results is None:
-        ds_results = init_or_load_xarray_dataset(
-            zarr_path=zarr_path,
+    if xr_ds is None:
+        xr_ds = init_or_load_xarray_dataset(
+            xr_ds_path=xr_ds_path,
             all_models=all_models, 
             site_ds=site_ds,
             force=force>1
@@ -53,7 +52,7 @@ def vep_pipeline(site_ds,
 
     # Gather metadata    
     all_samples = site_ds.dataset.samples
-    all_ploid = ds_results.coords["ploid"].values.tolist()
+    all_ploid = xr_ds.coords["ploid"].values.tolist()
 
     # Iterate over models
     for model_name in tqdm(all_models, 
@@ -114,7 +113,7 @@ def vep_pipeline(site_ds,
                     start_time = time.time()
 
                     # Skip if the value is already set
-                    current_value = ds_results[model_name].sel(site=site_name,
+                    current_value = xr_ds[model_name].sel(site=site_name,
                                                             sample=sample_name, 
                                                             ploid=ploid_name, 
                                                             #    slot="VEP"
@@ -150,8 +149,8 @@ def vep_pipeline(site_ds,
                     # Store only the relevant VEP results
                     for k,v in vep.items():
                         # Only assign valid slot types
-                        if k in ds_results[model_name].coords['slot'].values:        
-                            ds_results[model_name].loc[
+                        if k in xr_ds[model_name].coords['slot'].values:        
+                            xr_ds[model_name].loc[
                                 dict( 
                                     # cohort=cohort,
                                     # chrom=chrom,
@@ -173,7 +172,7 @@ def vep_pipeline(site_ds,
                     # Add the extra slots to the dataset
                     for k,v in extra_slots.items():
                         if v is not None:
-                            ds_results[model_name].loc[
+                            xr_ds[model_name].loc[
                                 dict(site=site_name,
                                     sample=sample_name, 
                                     ploid=ploid_name, 
@@ -182,25 +181,25 @@ def vep_pipeline(site_ds,
 
                     # Save after each ploid is complete
                     if checkpoint_frequency=="ploid":
-                        update_xarray_dataset(ds=ds_results, 
-                                              zarr_path=zarr_path,
+                        update_xarray_dataset(ds=xr_ds, 
+                                              xr_ds_path=xr_ds_path,
                                               verbose=verbose>1) 
                 # Save after each sample is complete
                 if checkpoint_frequency=="sample":
-                    update_xarray_dataset(ds=ds_results, 
-                                          zarr_path=zarr_path,
+                    update_xarray_dataset(ds=xr_ds, 
+                                          xr_ds_path=xr_ds_path,
                                           verbose=verbose>1)
             # Save after each site is complete
             if checkpoint_frequency=="site":
-                update_xarray_dataset(ds=ds_results, 
-                                      zarr_path=zarr_path,
+                update_xarray_dataset(ds=xr_ds, 
+                                      xr_ds_path=xr_ds_path,
                                       verbose=verbose>1) 
 
     # Return the results as an xarray dataset
-    return ds_results
+    return xr_ds
             
 
-def init_or_load_xarray_dataset(zarr_path,  
+def init_or_load_xarray_dataset(xr_ds_path,  
                                 site_ds,
                                 all_models=None, 
                                 # all_cohorts=None,
@@ -224,7 +223,7 @@ def init_or_load_xarray_dataset(zarr_path,
     Initialize a new xarray dataset or load an existing one.
     
     Parameters:
-        zarr_path (str): Path to the zarr store
+        xr_ds_path (str): Path to the zarr store
         all_models (list): List of model names
         all_sites (list): List of site n    ames
         all_samples (list): List of sample names
@@ -271,16 +270,16 @@ def init_or_load_xarray_dataset(zarr_path,
             'ploid', 
             'slot']
     
-    if zarr_path is not None:
+    if xr_ds_path is not None:
         # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(zarr_path), exist_ok=True)
+        os.makedirs(os.path.dirname(xr_ds_path), exist_ok=True)
         
         # Check if output file already exists and we're not forcing overwrite
-        if os.path.exists(zarr_path) and not force:
-            print(f"Loading existing results from {zarr_path}")
-            return xr.open_dataset(zarr_path, concat_characters=True)
+        if os.path.exists(xr_ds_path) and not force:
+            print(f"Loading existing results from {xr_ds_path}")
+            return xr.open_dataset(xr_ds_path, concat_characters=True)
     
-        print(f"Initializing new dataset at {zarr_path}")
+        print(f"Initializing new dataset at {xr_ds_path}")
     else:
         print("No zarr path provided, initializing empty dataset")
         
@@ -326,15 +325,15 @@ def init_or_load_xarray_dataset(zarr_path,
     ds = xr.Dataset(data_vars=data_vars, **kwargs)
     
     # Save to zarr file
-    if zarr_path is not None:
-        print(f"Saving xarray dataset to {zarr_path}")
-        ds.to_zarr(zarr_path, mode=mode)
-        print(f"xarray dataset saved to {zarr_path}")
+    if xr_ds_path is not None:
+        print(f"Saving xarray dataset to {xr_ds_path}")
+        ds.to_zarr(xr_ds_path, mode=mode)
+        print(f"xarray dataset saved to {xr_ds_path}")
     
     return ds
  
 def update_xarray_dataset(ds, 
-                          zarr_path, 
+                          xr_ds_path, 
                           mode="a",
                           verbose=False):
     """
@@ -347,17 +346,17 @@ def update_xarray_dataset(ds,
 
     Parameters:
         ds (xarray.Dataset): The dataset to update
-        zarr_path (str): The path to the zarr file
+        xr_ds_path (str): The path to the zarr file
         mode (str): The mode to use for the zarr file
         verbose (bool): Whether to print verbose output
 
     Returns:    
         None
     """
-    if zarr_path is not None:
+    if xr_ds_path is not None:
         if verbose:
-            print(f"Updating zarr ==> {zarr_path}")
-        ds.to_zarr(zarr_path, mode=mode)
+            print(f"Updating zarr ==> {xr_ds_path}")
+        ds.to_zarr(xr_ds_path, mode=mode)
     else:
         if verbose:
             print("No zarr path provided, skipping update")
@@ -488,24 +487,43 @@ def get_model_to_metric_map():
     }
 
 
-def vep_pipeline_multichrom(all_models = ["flashzoi", "evo2_7b", "spliceai_mm"],
-                            cohort = "1000_Genomes_on_GRCh38",
-                            variant_set = "clinvar_utr_snv",
-                            window_len = 2**18,
-                            limit_regions = None,
-                            limit_chroms = None,
-                            sample_limit=None,
-                            site_limit=None,
-                            force_gvl = False,
-                            force_vep = False):
+def vep_pipeline_onekg(bed,
+                        all_models = ["flashzoi", "evo2_7b", "spliceai_mm"],
+                        cohort = "1000_Genomes_on_GRCh38",
+                        variant_set = "clinvar_utr_snv",
+                        window_len = 2**18,
+                        limit_regions = None,
+                        limit_chroms = None,
+                        sample_limit = None,
+                        site_limit = None,
+                        force_gvl = False,
+                        force_vep = False,
+                        verbose = True):
+    """
+    Run the VEP pipeline for the 1000 Genomes project.
+
+    Parameters:     
+        bed (pl.DataFrame): A BED file with the variants to run the VEP pipeline on.
+        all_models (list): A list of model names to run the VEP pipeline on.
+        cohort (str): The cohort to run the VEP pipeline on.
+        variant_set (str): The variant set to run the VEP pipeline on.
+        window_len (int): The window length to run the VEP pipeline on.
+        limit_regions (int): The maximum number of regions to run the VEP pipeline on.
+        limit_chroms (int): The maximum number of chromosomes to run the VEP pipeline on.
+        sample_limit (int): The maximum number of samples to run the VEP pipeline on.
+        site_limit (int): The maximum number of sites to run the VEP pipeline on.
+        force_gvl (bool): Whether to force the generation of the GVL database.
+        force_vep (bool): Whether to force the running of the VEP pipeline.
+        verbose (bool): Whether to print verbose output.    
+
+    Returns:
+        xarray.Dataset: The results of the VEP pipeline.
+    """
     
     import src.clinvar as cv   
     import src.onekg as og
     import genvarloader as gvl
-    
-    # Chrom-specific fasta references: 
-    # https://ftp.ensembl.org/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.chromosome.22.fa.gz
-
+     
     # Merged fasta reference
     # https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa
     reference = pooch.retrieve(
@@ -517,19 +535,6 @@ def vep_pipeline_multichrom(all_models = ["flashzoi", "evo2_7b", "spliceai_mm"],
     manifest = og.list_remote_vcf(key=cohort)
     chroms = manifest['chrom'].unique().tolist()
     chroms.reverse()
-
-    # Import bed file
-    bed = pl.read_csv(
-        "data/UTR/clinvar_utr_snv.bed.gz",
-        schema_overrides={
-            'chrom': pl.Utf8,
-            'chromStart': pl.Int64,
-            'chromEnd': pl.Int64,
-            'score': pl.Float64
-        },
-        separator='\t'
-    ).drop_nulls(subset=['ALT'])
-
 
     # Iterate over chromosomes
     for chrom in tqdm(chroms[1:limit_chroms],
@@ -549,7 +554,8 @@ def vep_pipeline_multichrom(all_models = ["flashzoi", "evo2_7b", "spliceai_mm"],
         # Create GVL database
         bed_chrom = bed.filter(pl.col('chrom').str.replace("chr", "")==chrom.replace("chr", ""))
         if bed_chrom.height == 0:
-            print(f"No variants found for chromosome {chrom}")
+            if verbose:
+                print(f"No variants found for chromosome {chrom}")
             continue
         
         if not os.path.exists(ds_path) or force_gvl:
@@ -574,19 +580,19 @@ def vep_pipeline_multichrom(all_models = ["flashzoi", "evo2_7b", "spliceai_mm"],
         GVL.add_site_name(site_ds)
 
         # Create path for results file
-        zarr_path = os.path.join(results_dir,
+        xr_ds_path = os.path.join(results_dir,
                                 f"{chrom}.zarr") 
         
         # Run VEP pipeline
-        ds_results = vep_pipeline(site_ds=site_ds, 
-                                zarr_path=zarr_path,
-                                all_models=all_models, 
-                                checkpoint_frequency="site",
+        xr_ds = vep_pipeline(site_ds=site_ds, 
+                                xr_ds_path=xr_ds_path,
+                                all_models=all_models,  
                                 
-                                verbose=True,
+                                verbose=verbose,
                                 force=force_vep,
                                 sample_limit=sample_limit,
                                 site_limit=site_limit
                                 )
         
-    return ds_results
+    return xr_ds
+
