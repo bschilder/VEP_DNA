@@ -27,9 +27,12 @@ def download_vcf(vcf_url = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/
     return {"vcf": vcf_file, "idx": idx_file}
 
 
-def vcf_to_df(vcf_file,
+def vcf_to_df(vcf_file=None,
               contig=None):
     from genoray import VCF
+
+    if vcf_file is None:
+        vcf_file = download_vcf()["vcf"]
 
     vcf = VCF(vcf_file, 
             filter=lambda v: "UTR" in v.INFO.get("MC", ""))
@@ -241,3 +244,58 @@ def read_bed(path,
         **kwargs
     ).drop_nulls(subset=['ALT'])
     return bed
+
+def filter_df(vcf_df,
+              filters = {},
+              verbose=True):
+    """
+    Filter the VCF DataFrame based on the provided filters.
+    
+    Args:
+        vcf_df (pl.DataFrame): The input VCF DataFrame.
+        filters (dict): A dictionary of filters to apply to the DataFrame.
+        verbose (bool): Whether to print the number of genes in the filtered DataFrame.
+    Returns:
+        pl.DataFrame: The filtered VCF DataFrame.
+
+    Example:
+        >>> vcf_df = vcf_to_df()
+        >>> filters = {
+                "MC_term": ["5_prime_UTR_variant","3_prime_UTR_variant"],
+                "CLNREVSTAT_score": 2,
+                "CLNVC": "single_nucleotide_variant",
+                "CLNSIG": ["benign","pathogenic","Benign","Pathogenic"]
+            }
+        >>> filter_df(vcf_df, filters)
+    """
+
+    # Build filter conditions dynamically based on provided filters
+    filter_conditions = []
+    for key, value in filters.items():
+        if key not in vcf_df.columns:
+            if verbose:
+                print(f"Column {key} not found in DataFrame. Skipping filter.")
+            continue
+        if isinstance(value, list):
+            filter_conditions.append(pl.col(key).str.contains("|".join(value)))
+        else:
+            filter_conditions.append(pl.col(key) >= value if key == "CLNREVSTAT_score" else pl.col(key) == value)
+
+    # Combine all conditions with &
+    combined_condition = filter_conditions[0]
+    for condition in filter_conditions[1:]:
+        combined_condition = combined_condition & condition
+
+    cv_df = (vcf_df
+        .filter(combined_condition)
+        # Convert POS column to integer
+        .with_columns(pl.col("POS").cast(pl.Int64))
+        .drop_nulls(subset=['CLNDN'])
+    )
+
+    if verbose:
+        print(f"Filtered DataFrame shape: {cv_df.shape}")
+        print(f"Variant count: {cv_df.shape[0]}")
+        print(f"Gene count: {cv_df['GENEINFO'].unique().len()}")
+
+    return cv_df
