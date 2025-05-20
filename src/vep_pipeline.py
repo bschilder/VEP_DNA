@@ -4,8 +4,10 @@ import xarray as xr
 import polars as pl
 import numpy as np
 from tqdm.auto import tqdm
-import src.utils as utils
 import time
+import pooch
+
+import src.utils as utils
 import src.genvarloader as GVL
 
 def vep_pipeline(site_ds, 
@@ -484,3 +486,107 @@ def get_model_to_metric_map():
         "evo2_40b_base": ["VEP"],
         "dnabert2": ["VEP"]
     }
+
+
+def vep_pipeline_multichrom(all_models = ["flashzoi", "evo2_7b", "spliceai_mm"],
+                            cohort = "1000_Genomes_on_GRCh38",
+                            variant_set = "clinvar_utr_snv",
+                            window_len = 2**18,
+                            limit_regions = None,
+                            limit_chroms = None,
+                            sample_limit=None,
+                            site_limit=None,
+                            force_gvl = False,
+                            force_vep = False):
+    
+    import src.clinvar as cv   
+    import src.onekg as og
+    import genvarloader as gvl
+    
+    # Chrom-specific fasta references: 
+    # https://ftp.ensembl.org/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.chromosome.22.fa.gz
+
+    # Merged fasta reference
+    # https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa
+    reference = pooch.retrieve(
+        url=og.get_ftp_dict()[cohort]['ref'],
+        known_hash=None,
+        progressbar=True
+    )
+
+    manifest = og.list_remote_vcf(key=cohort)
+    chroms = manifest['chrom'].unique().tolist()
+    chroms.reverse()
+
+    # Import bed file
+    bed = pl.read_csv(
+        "data/UTR/clinvar_utr_snv.bed.gz",
+        schema_overrides={
+            'chrom': pl.Utf8,
+            'chromStart': pl.Int64,
+            'chromEnd': pl.Int64,
+            'score': pl.Float64
+        },
+        separator='\t'
+    ).drop_nulls(subset=['ALT'])
+
+
+    # Iterate over chromosomes
+    for chrom in tqdm(chroms[1:limit_chroms],
+                    desc="Iterating over chromosomes"):
+        
+        # Create storage directory
+        results_dir = os.path.join(os.path.expanduser('~'), 
+                                "projects","data",cohort,variant_set)
+        
+        # Download VCF files
+        vcf_paths = og.download_vcfs(manifest=manifest.loc[manifest['chrom']==chrom,:])
+        variants = vcf_paths[f"chr{chrom.replace('chr', '')}_vcf"]
+        
+        # Create GVL database name
+        ds_path = os.path.join(results_dir, f"{chrom}.gvl")
+
+        # Create GVL database
+        bed_chrom = bed.filter(pl.col('chrom').str.replace("chr", "")==chrom.replace("chr", ""))
+        if bed_chrom.height == 0:
+            print(f"No variants found for chromosome {chrom}")
+            continue
+        
+        if not os.path.exists(ds_path) or force_gvl:
+            gvl.write(
+                path=ds_path,
+                bed=gvl.with_length(bed_chrom[:limit_regions], window_len),
+                variants=variants,
+                overwrite=True,
+            )
+        # Import GVL database
+        ds = (
+            gvl.Dataset.open(ds_path, reference=reference)
+            .with_seqs("haplotypes")
+            .with_len(window_len)
+        )
+
+        # Import sites_ds
+        # Convert BED to sites
+        sites_chrom = cv.bed_to_sites(bed_chrom)
+        site_ds = gvl.DatasetWithSites(ds, sites_chrom) 
+        # Add the site_name column
+        GVL.add_site_name(site_ds)
+
+        # Create path for results file
+        zarr_path = os.path.join(results_dir,
+                                f"{chrom}.zarr") 
+        
+        # Run VEP pipeline
+        ds_results = vep_pipeline(site_ds=site_ds, 
+                                zarr_path=zarr_path,
+                                all_models=all_models, 
+                                checkpoint_frequency="site",
+                                
+                                verbose=True,
+                                force=force_vep,
+                                sample_limit=sample_limit,
+                                site_limit=site_limit
+                                )
+        
+    return ds_results
