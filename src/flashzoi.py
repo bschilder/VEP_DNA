@@ -14,7 +14,8 @@ import src.utils as utils
 import src.vep_metrics as vm
 
 # All models: https://huggingface.co/johahi
-DEFAULT_MODEL_NAME = "johahi/flashzoi-replicate-0"
+# 'johahi/borzoi-replicate-[0-3][-mouse]'
+DEFAULT_MODEL_NAME = "johahi/flashzoi-replicate-0" 
 
 def one_hot_seq(seq: str) -> np.ndarray:
     mapping = {'A':0,'C':1,'G':2,'T':3}

@@ -376,7 +376,8 @@ def add_site_name(site_ds, force=False):
         site_ds.rows = site_ds.rows.with_columns(
             (pl.lit("chr") + pl.col("chrom") + pl.lit(":") + 
             pl.col("chromStart").cast(pl.Utf8) + pl.lit("-") + 
-            pl.col("chromEnd").cast(pl.Utf8)).alias("site_name") +
+            pl.col("chromEnd").cast(pl.Utf8) +
             pl.lit("_") + pl.col("REF") +
             pl.lit("_") + pl.col("ALT")
-        )
+            ).alias("site_name")
+            )

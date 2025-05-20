@@ -10,10 +10,26 @@ import pooch
 import src.utils as utils
 import src.genvarloader as GVL
 
+def get_model_to_metric_map():
+    """
+    Get a map of model names to their correspondingVEP metric names.
+    
+    Returns:
+        dict: A dictionary mapping model names to their corresponding VEP metric names.
+    """
+    return {
+        "spliceai": ["VEP_donor","VEP_acceptor"],
+        "spliceai_mm": ["VEP_donor","VEP_acceptor"],
+        "flashzoi": ["delta_mean","delta_abs_mean","pca_css_mean"],
+        "evo2_7b": ["VEP"],
+        "evo2_40b": ["VEP"],
+        "evo2_7b_base": ["VEP"],
+        "evo2_40b_base": ["VEP"],
+        "dnabert2": ["VEP"]
+    }
+
 def vep_pipeline(site_ds, 
-                 all_models, 
-                #  cohort=None,
-                #  sites_set=None,
+                 all_models,  
                  xr_ds=None,
                  xr_ds_path=None,
                  sample_limit=None,
@@ -62,8 +78,7 @@ def vep_pipeline(site_ds,
         
         # Load the model
         model_name = model_name.lower()
-        model = load_model(model_name)
-        device = utils.get_device()
+        model = load_model(model_name) 
 
         # Init the model
         if device is None:
@@ -174,9 +189,9 @@ def vep_pipeline(site_ds,
                         if v is not None:
                             xr_ds[model_name].loc[
                                 dict(site=site_name,
-                                    sample=sample_name, 
-                                    ploid=ploid_name, 
-                                    slot=k)
+                                     sample=sample_name, 
+                                     ploid=ploid_name, 
+                                     slot=k)
                                 ] = v
 
                     # Save after each ploid is complete
@@ -467,26 +482,6 @@ def load_tokenizer(model_name):
         from src.dnabert2 import load_tokenizer as _load_tokenizer
         return _load_tokenizer() 
 
-
-def get_model_to_metric_map():
-    """
-    Get a map of model names to their correspondingVEP metric names.
-    
-    Returns:
-        dict: A dictionary mapping model names to their corresponding VEP metric names.
-    """
-    return {
-        "spliceai": ["VEP_donor","VEP_acceptor"],
-        "spliceai_mm": ["VEP_donor","VEP_acceptor"],
-        "flashzoi": ["delta_mean","delta_abs_mean","pca_css_mean"],
-        "evo2_7b": ["VEP"],
-        "evo2_40b": ["VEP"],
-        "evo2_7b_base": ["VEP"],
-        "evo2_40b_base": ["VEP"],
-        "dnabert2": ["VEP"]
-    }
-
-
 def vep_pipeline_onekg(bed,
                         all_models = ["flashzoi", "evo2_7b", "spliceai_mm"],
                         cohort = "1000_Genomes_on_GRCh38",
@@ -537,8 +532,8 @@ def vep_pipeline_onekg(bed,
     chroms.reverse()
 
     # Iterate over chromosomes
-    for chrom in tqdm(chroms[1:limit_chroms],
-                    desc="Iterating over chromosomes"):
+    for chrom in tqdm(chroms[:limit_chroms],
+                      desc="Iterating over chromosomes"):
         
         # Create storage directory
         results_dir = os.path.join(os.path.expanduser('~'), 
@@ -551,13 +546,14 @@ def vep_pipeline_onekg(bed,
         # Create GVL database name
         ds_path = os.path.join(results_dir, f"{chrom}.gvl")
 
-        # Create GVL database
+        # Subset the BED file to the current chromosome
         bed_chrom = bed.filter(pl.col('chrom').str.replace("chr", "")==chrom.replace("chr", ""))
         if bed_chrom.height == 0:
             if verbose:
                 print(f"No variants found for chromosome {chrom}")
             continue
         
+        # Create GVL database
         if not os.path.exists(ds_path) or force_gvl:
             gvl.write(
                 path=ds_path,
@@ -580,8 +576,7 @@ def vep_pipeline_onekg(bed,
         GVL.add_site_name(site_ds)
 
         # Create path for results file
-        xr_ds_path = os.path.join(results_dir,
-                                f"{chrom}.zarr") 
+        xr_ds_path = os.path.join(results_dir, f"{chrom}.zarr") 
         
         # Run VEP pipeline
         xr_ds = vep_pipeline(site_ds=site_ds, 

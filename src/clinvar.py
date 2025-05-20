@@ -102,6 +102,7 @@ def add_variant_name(df,
         pl.col(end_col).cast(pl.Utf8),
         pl.lit('_'),
         pl.col(ref_col),
+        pl.lit('_'),
         pl.col(alt_col)
     ]).alias(alias))
 
