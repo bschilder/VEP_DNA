@@ -7,7 +7,11 @@ dependencies:
   - pooch
   - scikit-learn
   # - rapidsai::rapids # Optional
+  - bioconda::pgenlib
+  - xarray
+  - zarr
   - pip
   - pip:
+      - git+https://github.com/mcvickerlab/GenVarLoader.git
       - borzoi-pytorch
       - ipykernel
