@@ -142,7 +142,8 @@ def vep_pipeline(site_ds,
                                     model=model,
                                     tokenizer=tokenizer,
                                     seq_wt=seq_wt, 
-                                    seq_mut=seq_mut)
+                                    seq_mut=seq_mut,
+                                    verbose=verbose>1)
                     run_vep_end_time = time.time()
                     # Store only the relevant VEP results
                     for k,v in vep.items():
@@ -364,24 +365,58 @@ def run_vep(model_name,
             seq_mut,
             model=None, 
             tokenizer=None, 
+            verbose=True,
             **kwargs):
     """
     Run the VEP pipeline for a given model.
     """
     if model_name == "spliceai":
         from src.spliceai import run_vep as _run_vep
+        return _run_vep(model=model, 
+                        tokenizer=tokenizer, 
+                        seq_wt=seq_wt, 
+                        seq_mut=seq_mut,
+                        verbose=verbose,
+                        **kwargs)
     
     elif model_name == "spliceai_mm":
         from src.spliceai_multimolecule import run_vep as _run_vep
+        return _run_vep(model=model, 
+                        tokenizer=tokenizer, 
+                        seq_wt=seq_wt, 
+                        seq_mut=seq_mut,
+                        verbose=verbose,
+                        **kwargs)
     
     elif model_name == "flashzoi":
         from src.flashzoi import run_vep as _run_vep
+        return _run_vep(model=model, 
+                        tokenizer=tokenizer, 
+                        seq_wt=seq_wt, 
+                        seq_mut=seq_mut,
+                        verbose=verbose,
+                        **kwargs)
     
-    return _run_vep(model=model, 
-                    tokenizer=tokenizer, 
-                    seq_wt=seq_wt, 
-                    seq_mut=seq_mut,
-                    **kwargs)
+    elif model_name.startswith("evo2"):
+        from src.evo2 import run_vep as _run_vep
+        return _run_vep(model=model, 
+                        tokenizer=tokenizer, 
+                        seq_wt=seq_wt, 
+                        seq_mut=seq_mut,
+                        verbose=verbose,
+                        **kwargs)
+    
+    elif model_name == "dnabert2":
+        from src.dnabert2 import run_vep as _run_vep
+        return _run_vep(model=model, 
+                        tokenizer=tokenizer, 
+                        seq_wt=seq_wt, 
+                        seq_mut=seq_mut,
+                        verbose=verbose,
+                        **kwargs)
+    
+    else:
+        raise ValueError(f"Model {model_name} not found")
 
 def load_model(model_name):
     """
@@ -389,28 +424,47 @@ def load_model(model_name):
     """
     if model_name == "spliceai":
         from src.spliceai import load_model as _load_model
+        return _load_model()
 
     elif model_name == "spliceai_mm":
         from src.spliceai_multimolecule import load_model as _load_model
+        return _load_model()
         
     elif model_name == "flashzoi":
-        from src.flashzoi import load_model as _load_model
-    return _load_model()
-        
+        from src.flashzoi import load_model as _load_model 
+        return _load_model()
+    
+    elif model_name.startswith("evo2"):
+        from src.evo2 import load_model as _load_model
+        return _load_model() 
+    
+    elif model_name == "dnabert2":
+        from src.dnabert2 import load_model as _load_model
+        return _load_model()
+    
 def load_tokenizer(model_name):
     """
     Load the tokenizer for a given model name.
     """
     if model_name == "spliceai":
         from src.spliceai import load_tokenizer as _load_tokenizer
+        return _load_tokenizer()
         
     elif model_name == "spliceai_mm":
         from src.spliceai_multimolecule import load_tokenizer as _load_tokenizer
-        
+        return _load_tokenizer()
+    
     elif model_name == "flashzoi":
         from src.flashzoi import load_tokenizer as _load_tokenizer
-        
-    return _load_tokenizer()
+        return _load_tokenizer()
+    
+    elif model_name.startswith("evo2"):
+        from src.evo2 import load_tokenizer as _load_tokenizer
+        return _load_tokenizer()
+    
+    elif model_name == "dnabert2":
+        from src.dnabert2 import load_tokenizer as _load_tokenizer
+        return _load_tokenizer() 
 
 
 def get_model_to_metric_map():
@@ -423,7 +477,7 @@ def get_model_to_metric_map():
     return {
         "spliceai": ["VEP_donor","VEP_acceptor"],
         "spliceai_mm": ["VEP_donor","VEP_acceptor"],
-        "flashzoi": ["delta_mean","delta_abs_mean","delta_pca_tracks_mean"],
+        "flashzoi": ["delta_mean","delta_abs_mean","pca_css_mean"],
         "evo2_7b": ["VEP"],
         "evo2_40b": ["VEP"],
         "evo2_7b_base": ["VEP"],

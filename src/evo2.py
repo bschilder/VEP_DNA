@@ -69,7 +69,9 @@ def run_vep(seq_wt,
             seq_mut, 
             model=None, 
             tokenizer=None,
-            device=None):
+            device=None,
+            verbose: bool = True,
+            **kwargs):
             
     results = {}
 

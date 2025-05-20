@@ -72,9 +72,26 @@ def run_vep(seq_wt,
             model=None, 
             tokenizer=None,
             run_squeeze: bool = True,
-            run_pca: bool = False):
+            run_pca: bool = False, 
+            verbose: bool = True,
+            **kwargs):
     """
     Run the VEP pipeline on a sequence.
+    Args:
+        seq_wt: WT sequence
+        seq_mut: Mut sequence
+        model: Model to use
+        tokenizer: Tokenizer to use
+        run_squeeze: If True, squeeze the output tensor
+        run_pca: If True, run PCA on the tracks
+        verbose: If True, print verbose output
+    Returns:
+        dict: Dictionary containing the results
+
+    Example:
+    seq_wt = "ATGC"
+    seq_mut = "ATGC"
+    results = run_vep(seq_wt, seq_mut)
     """
     if model is None:
         model = load_model()
@@ -100,14 +117,17 @@ def run_vep(seq_wt,
     if run_pca:
         # Compute cosine similarity between the PCA eigenvectors of the WT and MUT tracks
         # along the track axis
-        pca =  dr.pca_sklearn(torch.concat([trks_wt,trks_mut], axis=1).cpu())
-        css_pca = vm.cosine_sim(pca["eigenvectors"][:,1:trks_wt.shape[1]],
+        # pca = dr.pca_sklearn(x=torch.concat([trks_wt,trks_mut], axis=1).cpu())
+        pca = dr.pca_torch(x=torch.concat([trks_wt,trks_mut], axis=1))
+        pca_css = vm.cosine_sim(pca["eigenvectors"][:,1:trks_wt.shape[1]],
                                 pca["eigenvectors"][:,trks_wt.shape[1]+1:],
                                 css_agg_func=None, 
                                 # dim=0 returns compute cos sim along the track axis
                                 # dim=1 returns compute cos sim along the 100PC axis
-                                dim=0 )
-        results["delta_pca_tracks_mean"] = css_pca.mean()
+                                dim=0, 
+                                verbose=verbose)
+        results["pca_css"] = pca_css.cpu()
+        results["pca_css_mean"] = pca_css.mean().cpu()
 
     return results
 

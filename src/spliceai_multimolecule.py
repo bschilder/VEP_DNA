@@ -54,7 +54,12 @@ def get_acceptor_prob(output):
             framework="torch"
             )
 
-def run_vep(seq_wt, seq_mut, model=None, tokenizer=None):
+def run_vep(seq_wt, 
+            seq_mut, 
+            model=None, 
+            tokenizer=None,
+            verbose: bool = True,
+            **kwargs):
     results = {}
 
     # WT

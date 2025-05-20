@@ -53,8 +53,9 @@ def run_model(seq: str,
 def run_vep(seq_wt, 
             seq_mut, 
             model=None, 
-            tokenizer=None
-            ):
+            tokenizer=None,
+            verbose: bool = True,
+            **kwargs):
     results = {}
 
     # WT
@@ -69,8 +70,8 @@ def run_vep(seq_wt,
     results['VEP_css'] = vm.cosine_sim(logits_wt, 
                                        logits_mut, 
                                        axis=0, 
-                                       dim=0
-                                       )
+                                       dim=0, 
+                                       verbose=verbose)
 
     # Calculate KL divergence between probabilities
     results['VEP_kld'] = vm.kl_divergence(logits_wt, 

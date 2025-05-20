@@ -41,3 +41,28 @@ def get_acceptor_prob(y):
 
 def get_donor_prob(y):
     return y[0, :, 2]
+
+
+def run_vep(seq_wt, 
+            seq_mut, 
+            model=None, 
+            tokenizer=None,
+            verbose: bool = True,
+            **kwargs):
+    results = {}
+
+    # WT
+    y = run_model(seq_wt, model, tokenizer)
+    results["wt_donor_prob"] = get_donor_prob(y)
+    results["wt_acceptor_prob"] = get_acceptor_prob(y)
+
+    # Mut
+    y = run_model(seq_mut, model, tokenizer)
+    results["mut_donor_prob"] = get_donor_prob(y)
+    results["mut_acceptor_prob"] = get_acceptor_prob(y)
+
+    # VEP scores
+    results["VEP_donor"] = np.log(results["mut_donor_prob"] / results["wt_donor_prob"]).mean()
+    results["VEP_acceptor"] = np.log(results["mut_acceptor_prob"] / results["wt_acceptor_prob"]).mean()
+
+    return results
