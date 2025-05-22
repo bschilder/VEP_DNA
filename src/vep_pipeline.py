@@ -29,11 +29,12 @@ def get_model_to_metric_map():
     }
 
 def vep_pipeline(site_ds, 
-                 all_models,  
+                 run_models=None,
+                 all_models=None,  
                  xr_ds=None,
                  xr_ds_path=None,
-                 sample_limit=None,
-                 site_limit=None,
+                 limit_samples=None,
+                 limit_sites=None,
                  force=False,
                  checkpoint_frequency="site",
                  device=None,
@@ -43,11 +44,12 @@ def vep_pipeline(site_ds,
     
     Parameters:
         site_ds: Dataset with sites
-        all_models (list): List of model names to run
+        run_models (list): List of model names to run
+        all_models (list): List of model names to initialize the xarray dataset with
         xr_ds (xarray.Dataset): Dataset to store results
         xr_ds_path (str): Path to the zarr store
-        sample_limit (int): Maximum number of samples to run.
-        site_limit (int): Maximum number of sites to run.
+        limit_samples (int): Maximum number of samples to run.
+        limit_sites (int): Maximum number of sites to run.
         checkpoint_frequency (str): Frequency to checkpoint the dataset.
             In terms of frequency: site << sample < ploid
             "site": Save after each site is complete
@@ -56,6 +58,11 @@ def vep_pipeline(site_ds,
         verbose (bool): If True, print verbose output.
         device (str): Device to run the model on.
     """ 
+
+    # Check checkpoint_frequency is valid
+    checkpoint_frequency_opts = ["site", "sample", "ploid"]
+    if checkpoint_frequency not in checkpoint_frequency_opts:
+        raise ValueError(f"Invalid checkpoint_frequency: {checkpoint_frequency}. Must be one of: {', '.join(checkpoint_frequency_opts)}")
 
     # Initialize or load the dataset
     if xr_ds is None:
@@ -71,7 +78,7 @@ def vep_pipeline(site_ds,
     all_ploid = xr_ds.coords["ploid"].values.tolist()
 
     # Iterate over models
-    for model_name in tqdm(all_models, 
+    for model_name in tqdm(run_models, 
                            desc="Iterating over models",
                            disable=verbose<0,
                            leave=False):
@@ -91,17 +98,38 @@ def vep_pipeline(site_ds,
         # Load the tokenizer
         tokenizer = load_tokenizer(model_name)
 
-        for site in tqdm(site_ds.rows.iter_rows(named=True),
-                         total=site_ds.n_rows,
+        # Iterate over sites
+        # NOTE:
+        # sites_ds.sites contains all the sites provided to DatasetWithSites.
+        # site_ds.rows contains all the sites provided to DatasetWithSites mapped onto each region in the BED file input to the GVL dataset, resulting in a many:many mapping between regions and sites
+
+        # Get a single region per site, centered on that site
+        # This avoid unncessary iterations over multiple regions per site
+        region_to_site = (site_ds.rows
+                          .select(pl.col("region_idx")==pl.col("site_idx"))
+                          .with_row_index()
+                          .filter(pl.col("region_idx")==True)
+                          )
+        
+        if region_to_site.height == 0:
+            if verbose:
+                print(f"No sites found.")
+            continue
+        
+        # Iterate over sites
+        for row_idx in tqdm(region_to_site["index"],
                          desc="Iterating over sites",
                          disable=verbose<0,
                          leave=False):
-            site_idx = site['site_idx']
-            site_name = site["site_name"]
-            chrom = f'chr{str(site["chrom"]).replace("chr","")}'
+            
+            # Get site metadata
+            site = site_ds.rows[row_idx]
+            site_idx = site['site_idx'][0]
+            site_name = site["name"][0]
+            chrom = f'chr{str(site["chrom"][0]).replace("chr","")}'
 
             # --- Limit the number of sites for testing --- #
-            if site_limit is not None and site_idx>site_limit:
+            if limit_sites is not None and site_idx>limit_sites:
                 break
             
             # Skip the first row in sites (WT)
@@ -116,11 +144,8 @@ def vep_pipeline(site_ds,
                                                 leave=False):
 
                 # --- Limit the number of samples for testing --- #
-                if sample_limit is not None and sample_idx>sample_limit:
-                    break
-
-                # Get region ID(s) that the site falls within
-                # region_idx = site_ds.rows[sample_idx, "region_idx"]
+                if limit_samples is not None and sample_idx>limit_samples:
+                    break 
                 
                 # Iterate over ploidy
                 for ploid_idx, ploid_name in enumerate(all_ploid):
@@ -134,17 +159,22 @@ def vep_pipeline(site_ds,
                                                             #    slot="VEP"
                                                             )
                     if current_value.notnull().any() and not force:
+                        if verbose>1:
+                            print(f"Skipping {model_name}, {site_name}, {sample_name}, {ploid_name} because it already has a value")
                         continue  
 
                     # Extract and convert sequences
                     ## Get the wildtype (wt) sequence
+                    # use region_idx to get the correct sequence
                     seq_wt = GVL.get_wt_haps(site_ds=site_ds, 
+                                             row_idx=row_idx,
                                              sample_idx=sample_idx,
                                              ploid_idx=ploid_idx, 
                                              as_str=True)
                     ## Get the mutated (mut) sequence
+                    # use region_idx to get the correct sequence
                     seq_mut = GVL.get_mut_haps(site_ds=site_ds, 
-                                               site_idx=site_idx,
+                                               row_idx=row_idx,
                                                sample_idx=sample_idx,
                                                ploid_idx=ploid_idx, 
                                                as_str=True)           
@@ -239,7 +269,8 @@ def init_or_load_xarray_dataset(xr_ds_path,
     
     Parameters:
         xr_ds_path (str): Path to the zarr store
-        all_models (list): List of model names
+        all_models (list): List of model names. 
+            If None, all models listed in the get_model_to_metric_map() keys will be initialized.
         all_sites (list): List of site n    ames
         all_samples (list): List of sample names
         all_ploid (list): List of ploidy values
@@ -250,6 +281,7 @@ def init_or_load_xarray_dataset(xr_ds_path,
         xarray.Dataset: The initialized or loaded dataset
     """
     import xarray as xr
+    import dask.array as da
     import numpy as np
     import os
 
@@ -271,7 +303,7 @@ def init_or_load_xarray_dataset(xr_ds_path,
     # if all_chrom is None:
     #     all_chrom = [f"chr{chr}" for chr in [*range(1,23), "X", "Y"]]
     if all_sites is None:
-        all_sites = site_ds.rows[1:]["site_name"].to_list() # Skip the first row (WT)
+        all_sites = site_ds.rows["name"].unique().to_list()# Skip the first row (WT)
     if all_samples is None:
         all_samples = site_ds.dataset.samples
     if all_ploid is None:
@@ -316,9 +348,11 @@ def init_or_load_xarray_dataset(xr_ds_path,
             len(all_samples), 
             len(all_ploid), 
             len(all_slots)), 
-            dtype=object)
+            dtype=float)
         # Fill with None values
-        # data_array.fill(None)
+        data_array.fill(None)
+        # data_array = da.full_like(a=data_array, fill_value=None)
+        
         
         # Store the array with its dimension information
         data_vars[model_name] = xr.DataArray(
@@ -349,7 +383,7 @@ def init_or_load_xarray_dataset(xr_ds_path,
  
 def update_xarray_dataset(ds, 
                           xr_ds_path, 
-                          mode="a",
+                          mode="r+",
                           verbose=False):
     """
     Update an xarray dataset in a zarr file.
@@ -483,33 +517,40 @@ def load_tokenizer(model_name):
         return _load_tokenizer() 
 
 def vep_pipeline_onekg(bed,
-                        all_models = ["flashzoi", "evo2_7b", "spliceai_mm"],
+                       run_models = None,
+                        all_models = None,
                         cohort = "1000_Genomes_on_GRCh38",
                         variant_set = "clinvar_utr_snv",
                         window_len = 2**18,
                         limit_regions = None,
                         limit_chroms = None,
-                        sample_limit = None,
-                        site_limit = None,
+                        limit_samples = None,
+                        limit_sites = None,
                         force_gvl = False,
                         force_vep = False,
-                        verbose = True):
+                        verbose = True,
+                        checkpoint_frequency = "site"):
     """
     Run the VEP pipeline for the 1000 Genomes project.
 
     Parameters:     
         bed (pl.DataFrame): A BED file with the variants to run the VEP pipeline on.
-        all_models (list): A list of model names to run the VEP pipeline on.
+        run_models (list): A list of model names to run the VEP pipeline on.
+        all_models (list): A list of model names to initialize the xarray dataset with.
         cohort (str): The cohort to run the VEP pipeline on.
         variant_set (str): The variant set to run the VEP pipeline on.
         window_len (int): The window length to run the VEP pipeline on.
         limit_regions (int): The maximum number of regions to run the VEP pipeline on.
         limit_chroms (int): The maximum number of chromosomes to run the VEP pipeline on.
-        sample_limit (int): The maximum number of samples to run the VEP pipeline on.
-        site_limit (int): The maximum number of sites to run the VEP pipeline on.
+        limit_samples (int): The maximum number of samples to run the VEP pipeline on.
+        limit_sites (int): The maximum number of sites to run the VEP pipeline on.
         force_gvl (bool): Whether to force the generation of the GVL database.
         force_vep (bool): Whether to force the running of the VEP pipeline.
         verbose (bool): Whether to print verbose output.    
+        checkpoint_frequency (str): The frequency to checkpoint the VEP pipeline.
+            "site": Checkpoint after each site is processed.
+            "sample": Checkpoint after each sample is processed.
+            "ploid": Checkpoint after each ploid is processed.
 
     Returns:
         xarray.Dataset: The results of the VEP pipeline.
@@ -581,13 +622,47 @@ def vep_pipeline_onekg(bed,
         # Run VEP pipeline
         xr_ds = vep_pipeline(site_ds=site_ds, 
                                 xr_ds_path=xr_ds_path,
+                                run_models=run_models,
                                 all_models=all_models,  
-                                
                                 verbose=verbose,
                                 force=force_vep,
-                                sample_limit=sample_limit,
-                                site_limit=site_limit
+                                limit_samples=limit_samples,
+                                limit_sites=limit_sites,
+                                checkpoint_frequency=checkpoint_frequency
                                 )
         
     return xr_ds
 
+def load_vep_results(xr_ds_path, 
+                     notnull=True, 
+                     as_df=True,
+                     dropna_subset=None,
+                     verbose=True):
+    """
+    Load the VEP results from a zarr file.
+
+    Parameters:
+        xr_ds_path (str): The path to the zarr file.
+        notnull (bool): Whether to return only the non-null values.
+        as_df (bool): Whether to return the results as a pandas DataFrame.
+
+    Returns:
+        xarray.Dataset: The VEP results.
+    """
+    if not isinstance(xr_ds_path, xr.Dataset):
+        xr_ds = xr.open_dataset(xr_ds_path)
+    else:
+        xr_ds = xr_ds_path
+    if notnull:
+        xr_ds = xr_ds.where(xr_ds.notnull())
+    if as_df:
+        df = xr_ds.to_dataframe().reset_index()
+        if dropna_subset is not None:
+            df = df.dropna(subset=dropna_subset)
+        
+        if verbose:
+            print(df.shape)
+            print("sites:",df["site"].nunique())
+            print("samples:",df["sample"].nunique())
+        return df
+    return xr_ds

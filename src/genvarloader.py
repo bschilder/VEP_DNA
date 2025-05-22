@@ -301,9 +301,11 @@ def calculate_sequence_similarities(ds,
     return seq_sim
 
 def get_wt_haps(site_ds, 
+                row_idx=None,
                 sample_idx=None, 
                 ploid_idx=None, 
-                as_str=False):
+                as_str=False, 
+                verbose=False):
     """
     Get the WT haplotype sequence for a given sample index.
     Note: The first row of the site_ds.rows is the WT haplotype.
@@ -314,20 +316,30 @@ def get_wt_haps(site_ds,
         ploid_idx (int): The index of the ploidy to get the WT haplotype for
             If None, the WT haplotype for all ploidies will be returned
         as_str (bool): Whether to return the WT haplotype as a string
+        verbose (bool): Whether to print verbose output
     Returns:
         str: The WT haplotype sequence
     """
-    wt_haps = site_ds.dataset[site_ds.rows[0, "region_idx"], sample_idx].haps
+
+    # Extract haplotype sequences
+    wt_haps = site_ds.dataset[site_ds.rows[row_idx, "region_idx"], sample_idx].haps
     
+    # Subset to a specific haplotype
     if ploid_idx is not None:
         wt_haps = wt_haps[ploid_idx]
+    
+    # Convert to string
     if as_str is True:
         wt_haps = bytearray_to_string(wt_haps)
+
+    # Print report 
+    if verbose is True:
+        print(f"WT haplotype extracted: {wt_haps}")
     return wt_haps
 
 
 def get_mut_haps(site_ds, 
-                 site_idx,
+                 row_idx,
                  sample_idx=None, 
                  ploid_idx=None, 
                  as_str=False):
@@ -343,7 +355,7 @@ def get_mut_haps(site_ds,
     Returns:
         str: The mutated haplotype sequence
     """
-    mut_haps, flags = site_ds[site_idx, sample_idx]
+    mut_haps, flags = site_ds[row_idx, sample_idx]
     mut_haps = mut_haps.haps
     if ploid_idx is not None:
         mut_haps = mut_haps[ploid_idx]

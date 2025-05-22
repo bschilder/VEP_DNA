@@ -360,8 +360,6 @@ def as_tf_tensor(x):
     if isinstance(x, np.ndarray):
         return tf.convert_to_tensor(x)
     
-
-
 def as_numpy(x):
     """
     Convert a torch.Tensor to a numpy.ndarray.
