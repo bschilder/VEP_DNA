@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from torch.amp import autocast
 from typing import List
+from tqdm.auto import tqdm
 
 from borzoi_pytorch import Borzoi
 
@@ -39,13 +40,20 @@ def score_all_tracks(seq: str,
     """
     Score all tracks of a sequence.
     Args:
-        seq: Sequence to score
+        seq: A sequence or batch of sequences to score
         model: Model to use
         tokenizer: Tokenizer to use
         run_squeeze: If True, squeeze the output tensor
         device: Device to use
     Returns:
-        np.ndarray: Array of shape (n_tissues,)
+        if run_squeeze and seq is a single sequence:
+            np.ndarray: Array of shape (n_tissues, L)
+        if run_squeeze and seq is a batch of sequences:
+            np.ndarray: Array of shape (batch_size, n_tissues, L)
+        if not run_squeeze and seq is a single sequence:
+            torch.Tensor: Tensor of shape (1, n_tissues, L)
+        if not run_squeeze and seq is a batch of sequences:
+            torch.Tensor: Tensor of shape (batch_size, n_tissues, L)
     """
     if model is None:
         model = load_model()
@@ -70,6 +78,128 @@ def score_all_tracks(seq: str,
         return trks.squeeze()
     else:
         return trks
+    
+
+def dict_to_numpy(results, 
+                  to_cpu: bool = True,
+                  as_numpy: bool = True):
+    """
+    Convert a dictionary of tensors to numpy arrays.
+    """
+    # Convert tensors to numpy arrays and transfer from GPU --> CPU
+    for k,v in results.items():
+        if isinstance(v, torch.Tensor):
+            if to_cpu:
+                results[k] = v.cpu()
+            if as_numpy:
+                results[k] = results[k].numpy()
+
+    return results
+    
+
+def compute_delta_metrics(trks_wt, trks_mut,
+                          as_numpy: bool = False,
+                          verbose: bool = False):
+    """
+    Compute delta metrics between the WT and MUT tracks.
+    If the results are batched, compute metrics seaprately for each sample (first dimension)
+    If the results are unbatched, compute metrics for the entire batch
+
+    Args:
+        trks_wt: WT tracks
+        trks_mut: MUT tracks
+        as_numpy: If True, convert tensors to numpy arrays
+        verbose: If True, print verbose output
+    
+    Returns:
+        dict: Dictionary containing the results
+    """
+    # Check trks shapes
+    assert trks_wt.shape == trks_mut.shape, "WT and MUT tracks must have the same shape"
+    assert trks_wt.ndim == 2 or trks_wt.ndim == 3, "WT and MUT tracks must be 2D or 3D"
+
+    results = {}
+    results["delta"] = trks_mut - trks_wt
+    # For unbatched results, compute metrics
+    # Each key stores a tensor of length 1
+    if results["delta"].ndim == 2:
+        if verbose:
+            print("Computing delta metrics for unbatched results")
+        results["delta_mean"] = results["delta"].mean()  
+        results["delta_abs_mean"] = results["delta"].abs().mean()
+        results["delta_pow2_mean"] = results["delta"].pow(2).mean()
+        results["delta_max_max"] = results["delta"].max().max()
+    
+    # For batched results, compute metrics seaprately for each sample (first dimension)
+    # Each key stores a tensor of length n_samples
+    elif results["delta"].ndim == 3:
+        if verbose:
+            print("Computing delta metrics for batched results")
+        results["delta_mean"] = results["delta"].mean(dim=-1).mean(dim=-1)  
+        results["delta_abs_mean"] = results["delta"].abs().mean(dim=-1).mean(dim=-1)
+        results["delta_pow2_mean"] = results["delta"].pow(2).mean(dim=-1).mean(dim=-1)
+        results["delta_max_max"] = results["delta"].max(dim=-1)[0].max(dim=-1)[0]
+
+    # Convert tensors to numpy arrays and transfer from GPU --> CPU
+    results = dict_to_numpy(results, as_numpy=as_numpy)
+
+    # Return results
+    return results
+
+def compute_pca_metrics(trks_wt, trks_mut, verbose=True):
+    """
+    Compute PCA metrics between the WT and MUT tracks.
+    Args:
+        trks_wt: WT tracks
+        trks_mut: MUT tracks
+        verbose: If True, print verbose output
+    Returns:
+        dict: Dictionary containing the results
+    """
+    # Check trks shapes
+    assert trks_wt.shape == trks_mut.shape, "WT and MUT tracks must have the same shape"
+    assert trks_wt.ndim == 2 or trks_wt.ndim == 3, "WT and MUT tracks must be 2D or 3D"
+    
+    # Unbatched sequences (dims: n_tissues, L)
+    if trks_wt.ndim == 2:
+        results = {}
+        # Run PCA
+        # Compute cosine similarity between the PCA eigenvectors of the WT and MUT tracks
+        # along the track axis
+        # pca = dr.pca_sklearn(x=torch.concat([trks_wt,trks_mut], axis=1).cpu())
+        pca = dr.pca_torch(x=torch.concat([trks_wt,trks_mut], axis=1))
+        pca_css = vm.cosine_sim(pca["eigenvectors"][:,1:trks_wt.shape[1]],
+                                pca["eigenvectors"][:,trks_wt.shape[1]+1:],
+                                css_agg_func=None, 
+                                # dim=0 returns compute cos sim along the track axis
+                                # dim=1 returns compute cos sim along the 100PC axis
+                                dim=0, 
+                                verbose=verbose)
+        results["pca_css"] = pca_css
+        results["pca_css_mean"] = pca_css.mean()
+        
+        del pca, pca_css
+        torch.cuda.empty_cache() 
+
+
+    # Batched sequences (dims: batch_size, n_tissues, L)
+    elif trks_wt.ndim == 3:
+        n_samples = trks_wt.shape[0]
+        results = {"pca_css": [], "pca_css_mean": []}
+        for i in tqdm(range(n_samples), 
+                      desc="Computing PCA CSS", 
+                      disable=not verbose):
+            pca_css = compute_pca_metrics(trks_wt=trks_wt[i], 
+                                          trks_mut=trks_mut[i], 
+                                          verbose=verbose)
+            results["pca_css"].append(pca_css["pca_css"])
+            results["pca_css_mean"].append(pca_css["pca_css_mean"])
+            del pca_css
+            torch.cuda.empty_cache() 
+        results["pca_css"] = torch.stack(results["pca_css"], dim=0)
+        results["pca_css_mean"] = torch.stack(results["pca_css_mean"], dim=0)
+        
+    return results
 
 def run_vep(seq_wt, 
             seq_mut, 
@@ -116,40 +246,24 @@ def run_vep(seq_wt,
                                 run_squeeze=run_squeeze)    
                                 
     # Compute delta metrics
-    results["delta"] = trks_mut - trks_wt
-    results["delta_mean"] = float(results["delta"].mean())
-    results["delta_abs_mean"] = float(results["delta"].abs().mean())
-    results["delta_pow2_mean"] = float(results["delta"].pow(2).mean())
-    results["delta_max_max"] = float(results["delta"].max().max())
+    results = compute_delta_metrics(trks_wt=trks_wt, 
+                                    trks_mut=trks_mut, 
+                                    run_pca=run_pca, 
+                                    verbose=verbose)
     
-    for k,v in results.items():
-        if isinstance(v, torch.Tensor):
-            results[k] = v.cpu().numpy()
-
-    del trks_wt
-    del trks_mut
-    torch.cuda.empty_cache()
-    
-    # Run PCA
+    # Compute PCA metrics
     if run_pca:
-        # Compute cosine similarity between the PCA eigenvectors of the WT and MUT tracks
-        # along the track axis
-        # pca = dr.pca_sklearn(x=torch.concat([trks_wt,trks_mut], axis=1).cpu())
-        pca = dr.pca_torch(x=torch.concat([trks_wt,trks_mut], axis=1))
-        pca_css = vm.cosine_sim(pca["eigenvectors"][:,1:trks_wt.shape[1]],
-                                pca["eigenvectors"][:,trks_wt.shape[1]+1:],
-                                css_agg_func=None, 
-                                # dim=0 returns compute cos sim along the track axis
-                                # dim=1 returns compute cos sim along the 100PC axis
-                                dim=0, 
+        results.update(
+            compute_pca_metrics(trks_wt=trks_wt, 
+                                trks_mut=trks_mut, 
                                 verbose=verbose)
-        results["pca_css"] = pca_css.cpu().numpy()
-        results["pca_css_mean"] = pca_css.mean().cpu().numpy()
-        
-        del pca, pca_css
-        torch.cuda.empty_cache()
+                                )
+    
+    del trks_wt, trks_mut
+    torch.cuda.empty_cache() 
 
     return results
+ 
 
 def load_targets(species: List[str] = ["human","mouse"],
                  top_n_tissues: int = 10):
@@ -225,7 +339,7 @@ def test_batch_sizes(batch_sizes: List[int] = range(5,100),
     if tokenizer is None:
         tokenizer = load_tokenizer()
     if device is None:
-        device = ut.get_device()
+        device = utils.get_device()
     results = {}
     for N in batch_sizes:
         if verbose:

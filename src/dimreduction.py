@@ -1,4 +1,5 @@
 import pandas as pd 
+
 def pca_torch(x, 
               n_components: int = 100):
     """
@@ -18,7 +19,6 @@ def pca_torch(x,
     """
     import torch
 
-    x = x.cpu()
     # Convert numpy array to torch tensor and reshape
     X = x.reshape(x.shape[0], -1)
 

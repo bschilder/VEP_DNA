@@ -198,7 +198,20 @@ def bytearray_to_string(byte_arr):
     """
     if isinstance(byte_arr, str):
         return byte_arr
-    return byte_arr.tobytes().decode()
+    
+    if isinstance(byte_arr, list):
+        return [bytearray_to_string(b) for b in byte_arr]
+    
+    if isinstance(byte_arr, np.ndarray):
+
+        if byte_arr.ndim == 1:
+            return byte_arr.tobytes().decode()
+        elif byte_arr.ndim == 2:
+            return [byte_arr[i].tobytes().decode() for i in range(byte_arr.shape[0])]
+        elif byte_arr.ndim == 3:
+            return [[byte_arr[i,j].tobytes().decode() for j in range(byte_arr.shape[1])] for i in range(byte_arr.shape[0])]
+        else:
+            raise ValueError(f"Invalid number of dimensions: {byte_arr.ndim}")
 
 def bytearray_to_bioseq(byte_arr):
 
@@ -304,68 +317,58 @@ def calculate_sequence_similarities(ds,
     )
     return seq_sim
 
-def get_wt_haps(site_ds, 
-                row_idx=None,
+def haps_to_seqs(haps, 
                 sample_idx=None, 
                 ploid_idx=None, 
                 as_str=False, 
+                run_stack_ploidy=True,
+                run_squeeze=True,
                 verbose=False):
     """
-    Get the WT haplotype sequence for a given sample index.
-    Note: The first row of the site_ds.rows is the WT haplotype.
+    Get the haplotype sequence(s) for a given sample index.
 
     Parameters:
-        site_ds (Dataset): The dataset containing the haplotypes
+        haps (Haplotype): The gvl.AnnotatedHaps object containing the haplotypes
         sample_idx (int): The index of the sample to get the WT haplotype for
         ploid_idx (int): The index of the ploidy to get the WT haplotype for
             If None, the WT haplotype for all ploidies will be returned
         as_str (bool): Whether to return the WT haplotype as a string
+        run_stack_ploidy (bool): Whether to run the stack_ploidy function, 
+        which will unnest the ploidy dimension (thereby doubling the number of samples in diploid samples   )
+        run_squeeze (bool): Whether to run the squeeze function, which will get rid of the extra dimension
+            (thereby unnesting the sample dimension if it exists)
         verbose (bool): Whether to print verbose output
     Returns:
-        str: The WT haplotype sequence
+        str: The haplotype sequence(s)
     """
 
     # Extract haplotype sequences
-    wt_haps = site_ds.dataset[site_ds.rows[row_idx, "region_idx"], sample_idx].haps
+    if haps.haps.ndim ==2:
+        # ploid, seqlen
+        seqs = haps.haps[ploid_idx]
+    elif haps.haps.ndim ==3:
+        # sample, ploid, seqlen
+        seqs = haps.haps[sample_idx, ploid_idx]
+    else:
+        raise ValueError(f"Invalid number of dimensions: {haps.haps.ndim}")
     
-    # Subset to a specific haplotype
-    if ploid_idx is not None:
-        wt_haps = wt_haps[ploid_idx]
+    # Get rid of the extra dimension if it exists
+    if run_squeeze:
+        seqs = seqs.squeeze()
+    
+    # Unstack ploidy if requested
+    if run_stack_ploidy is True:
+        seqs = stack_ploidy(seqs)
     
     # Convert to string
     if as_str is True:
-        wt_haps = bytearray_to_string(wt_haps)
+        seqs = bytearray_to_string(seqs)
 
     # Print report 
     if verbose is True:
-        print(f"WT haplotype extracted: {wt_haps}")
-    return wt_haps
-
-
-def get_mut_haps(site_ds, 
-                 row_idx,
-                 sample_idx=None, 
-                 ploid_idx=None, 
-                 as_str=False):
-    """
-    Get the mutated haplotype sequence for a given sample index.
-
-    Parameters:
-        site_ds (Dataset): The dataset containing the haplotypes
-        site_idx (int): The index of the site to get the mutated haplotype for
-        sample_idx (int): The index of the sample to get the mutated haplotype for
-        ploid_idx (int): The index of the ploidy to get the mutated haplotype for
-        as_str (bool): Whether to return the mutated haplotype as a string
-    Returns:
-        str: The mutated haplotype sequence
-    """
-    mut_haps, flags = site_ds[row_idx, sample_idx]
-    mut_haps = mut_haps.haps
-    if ploid_idx is not None:
-        mut_haps = mut_haps[ploid_idx]
-    if as_str is True:
-        mut_haps = bytearray_to_string(mut_haps)
-    return mut_haps
+        print(f"Haplotype sequence(s) extracted: {seqs}")
+    return seqs
+ 
 
 def add_site_name(site_ds, force=False):
     """

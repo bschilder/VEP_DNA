@@ -452,4 +452,19 @@ def random_seqs(N,
         seqs = [seq.tobytes().decode() for seq in seqs]
     return seqs
 
- 
+def split_batches(n_samples, 
+                max_seqs_per_batch=25, 
+                ploid=2,
+                mutants=None):
+    # Divide by 2 to account for both haplotypes
+    batch_size = max_seqs_per_batch // ploid 
+
+    # Divide by number of mutants to account for mutatated copies of same sequence
+    if mutants is not None:
+        batch_size = batch_size // (mutants+1)
+
+    # Ceiling division
+    n_batches = (n_samples + batch_size - 1) // batch_size  
+
+    batches = [slice(batch_idx*batch_size, (batch_idx+1)*batch_size) for batch_idx in range(n_batches)]
+    return batches

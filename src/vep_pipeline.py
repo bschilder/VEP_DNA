@@ -40,6 +40,7 @@ def vep_pipeline(site_ds,
                  xr_ds_path=None,
                  limit_samples=None,
                  limit_sites=None,
+                 max_seqs_per_batch=25, 
                  force=False,
                  checkpoint_frequency="site",
                  extra_samples=["REF","consensus"], 
@@ -109,7 +110,11 @@ def vep_pipeline(site_ds,
         ds_ref, site_ds_ref = GVL.get_reference_dataset(site_ds, verbose=verbose)
         if ds_ref is None:
             all_samples = [s for s in all_samples if s != "REF"] 
-        
+
+    # Get batches
+    batches = utils.split_batches(n_samples=len(all_samples), 
+                                  max_seqs_per_batch=max_seqs_per_batch) 
+    
     # Gather metadata: ploidy
     all_ploid = xr_ds.coords["ploid"].values.tolist()
     if all_models is None:
@@ -179,6 +184,12 @@ def vep_pipeline(site_ds,
             site_idx = site['site_idx'][0]
             site_name = site["name"][0] 
 
+            # Import all the haplotypes for the region at once to reduce overhead
+            wt_haps, mut_haps, flags = site_ds[row_idx, :]
+            # Import the sequences for the REF sample
+            ## All samples are REF, just use the first one
+            wt_haps_ref, mut_haps_ref, flags_ref = site_ds_ref[row_idx, 0] 
+
             # --- Limit the number of sites for testing --- #
             if limit_sites is not None and site_idx>limit_sites:
                 break
@@ -213,24 +224,27 @@ def vep_pipeline(site_ds,
                         if verbose>1:
                             print(f"Skipping {model_name}, {site_name}, {sample_name}, {ploid_name} because it already has a value")
                         continue  
-
+                    
+                    # Determine whether to return the sequences as a string/list (True) or a bytearray (False)
+                    seq_as_str = True
+                    
                     # Extract and convert sequences
-                    if sample_name == "REF" and site_ds_ref is not None:
+                    if sample_name == "REF" and site_ds_ref is not None: 
+                        
                         # Skip the second ploid because the REF genome is haploid
                         if ploid_idx == 1:
                             continue
+
                         ## Get the wildtype (wt) sequence
-                        seq_wt = GVL.get_wt_haps(site_ds=site_ds_ref, 
-                                                 row_idx=row_idx,
-                                                 sample_idx=0, # all samples are REF, just use the first one
-                                                 ploid_idx=ploid_idx, 
-                                                 as_str=True)
+                        seq_wt = GVL.haps_to_seqs(haps=wt_haps_ref, 
+                                                  sample_idx=sample_idx,
+                                                  ploid_idx=ploid_idx, 
+                                                  as_str=seq_as_str)
                         ## Get the mutated (mut) sequence
-                        seq_mut = GVL.get_mut_haps(site_ds=site_ds_ref, 
-                                                   row_idx=row_idx,
-                                                   sample_idx=0, # all samples are REF, just use the first one
+                        seq_mut = GVL.haps_to_seqs(haps=mut_haps_ref, 
+                                                   sample_idx=sample_idx,
                                                    ploid_idx=ploid_idx, 
-                                                   as_str=True)        
+                                                   as_str=seq_as_str)        
 
                     elif sample_name == "consensus":
                         # consensus_seq = GVL.get_consensus_sequence(site_ds=site_ds, 
@@ -241,17 +255,15 @@ def vep_pipeline(site_ds,
 
                     else:
                         ## Get the wildtype (wt) sequence
-                        seq_wt = GVL.get_wt_haps(site_ds=site_ds, 
-                                                row_idx=row_idx,
-                                                sample_idx=sample_idx,
-                                                ploid_idx=ploid_idx, 
-                                                as_str=True)
+                        seq_wt = GVL.haps_to_seqs(haps=wt_haps, 
+                                                  sample_idx=sample_idx,
+                                                  ploid_idx=ploid_idx, 
+                                                  as_str=seq_as_str)
                         ## Get the mutated (mut) sequence
-                        seq_mut = GVL.get_mut_haps(site_ds=site_ds, 
-                                                row_idx=row_idx,
-                                                sample_idx=sample_idx,
-                                                ploid_idx=ploid_idx, 
-                                                as_str=True)           
+                        seq_mut = GVL.haps_to_seqs(haps=mut_haps, 
+                                                   sample_idx=sample_idx,
+                                                   ploid_idx=ploid_idx, 
+                                                   as_str=seq_as_str)           
                     # Run the model
                     if verbose>1:
                         print(f"Running VEP: {model_name}, {site_name}, {sample_name}, {ploid_idx}")
@@ -469,12 +481,13 @@ def update_xarray_dataset(ds,
                           verbose=False):
     """
     Update an xarray dataset in a zarr file.
-    Available modes for to_zarr:
-        - "w": Create new store, overwrite if exists (default)
-        - "a": Append to existing store
-        - "r": Read-only access
-        - "w-": Create new store, fail if exists
-
+    mode ({"w", "w-", "a", "a-", "r+", None}, optional) – Persistence mode: 
+            "w" means create (overwrite if exists); 
+            "w-" means create (fail if exists); 
+            "a" means override all existing variables including dimension coordinates (create if does not exist); 
+            "a-" means only append those variables that have append_dim. 
+            "r+" means modify existing array values only (raise an error if any metadata or shapes would change). 
+            The default mode is "a" if append_dim is set. Otherwise, it is "r+" if region is set and w- otherwise.
     Parameters:
         ds (xarray.Dataset): The dataset to update
         xr_ds_path (str): The path to the zarr file
@@ -671,7 +684,9 @@ def vep_pipeline_onekg(bed,
                                 "projects","data",cohort,variant_set)
         
         # Download VCF files
-        vcf_paths = og.download_vcfs(manifest=manifest.loc[manifest['chrom']==chrom,:])
+        vcf_paths = og.download_vcfs(key=cohort, 
+                                     manifest=manifest.loc[manifest['chrom']==chrom,:],
+                                     verbose=verbose>1)
         variants = vcf_paths[f"chr{chrom.replace('chr', '')}_vcf"]
         
         # Create GVL database name

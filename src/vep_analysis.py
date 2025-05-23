@@ -32,7 +32,7 @@ def summarise_sites(vep_df,
     return mutant_summary_str
 
 def summarise_title(vep_df,
-                     label_cols = ['GENE', 'site']):
+                     label_cols = ['GENE', 'site',"sample"]):
     
     labels = {}
     for col in label_cols:
