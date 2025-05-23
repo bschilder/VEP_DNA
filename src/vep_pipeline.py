@@ -24,6 +24,7 @@ def get_model_to_metric_map():
         "flashzoi": ["delta_mean",
                      "delta_abs_mean",
                      "delta_pow2_mean",
+                     "delta_max_max",
                      "pca_css_mean"],
         "evo2_7b": ["VEP"],
         "evo2_40b": ["VEP"],
@@ -350,6 +351,13 @@ def init_or_load_xarray_dataset(xr_ds_path,
         all_ploid (list): List of ploidy values
         all_slots (list): List of slot names
         force (bool): If True, overwrite existing dataset
+        mode ({"w", "w-", "a", "a-", "r+", None}, optional) – Persistence mode: 
+            "w" means create (overwrite if exists); 
+            "w-" means create (fail if exists); 
+            "a" means override all existing variables including dimension coordinates (create if does not exist); 
+            "a-" means only append those variables that have append_dim. 
+            "r+" means modify existing array values only (raise an error if any metadata or shapes would change). 
+            The default mode is "a" if append_dim is set. Otherwise, it is "r+" if region is set and w- otherwise.
         
     Returns:
         xarray.Dataset: The initialized or loaded Dataset

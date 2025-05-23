@@ -120,6 +120,7 @@ def run_vep(seq_wt,
     results["delta_mean"] = float(results["delta"].mean())
     results["delta_abs_mean"] = float(results["delta"].abs().mean())
     results["delta_pow2_mean"] = float(results["delta"].pow(2).mean())
+    results["delta_max_max"] = float(results["delta"].max().max())
     
     for k,v in results.items():
         if isinstance(v, torch.Tensor):
