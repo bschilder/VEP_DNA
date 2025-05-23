@@ -380,3 +380,76 @@ def as_numpy(x):
     
     return x
     
+def sort_by_reverse_string(df, 
+                           column, 
+                           ascending=False,
+                           extra_sort_cols=[]):
+    """Sort a dataframe by the reverse of strings in a column.
+    
+    Args:
+        df (pd.DataFrame): DataFrame to sort
+        column (str): Column name containing strings to sort by
+        extra_sort_cols (list): Additional columns to sort by
+        
+    Returns:
+        pd.DataFrame: Sorted dataframe
+        
+    Example:
+        >>> df = pd.DataFrame({'col': ['abc', 'def', 'ghi']})
+        >>> sort_by_reverse_string(df, 'col')
+        # Returns dataframe sorted by ['cba', 'fed', 'ihg']
+    """
+    # Create temporary column with reversed strings
+    df = df.copy()
+    df['_temp_rev'] = df[column].apply(lambda x: str(x)[::-1])
+    
+    # Sort by reversed strings and drop temp column
+    df = df.sort_values(['_temp_rev']+extra_sort_cols, ascending=ascending).drop('_temp_rev', axis=1)
+    
+    return df
+
+def one_hot_seq(seq: str, 
+                transpose: bool = True,
+                **kwargs) -> np.ndarray:
+    # mapping = {'A':0,'C':1,'G':2,'T':3}
+    # arr = np.zeros((4, len(seq)), dtype=np.float32)
+    # for i, b in enumerate(seq):
+    #     idx = mapping.get(b)
+    #     if idx is not None:
+    #         arr[idx, i] = 1.0
+    import seqpro as sp
+    return sp.DNA.ohe(seq, **kwargs).T if transpose else sp.DNA.ohe(seq, **kwargs)
+
+
+def random_seqs(N,
+                L,
+                alphabet="DNA",
+                seed=1234,
+                as_str=False):
+    """
+    Generate random sequences encoded as bytearrays using seqpro.
+
+    Args:
+        N: Number of sequences to generate
+        L: Length of each sequence
+        alphabet: Alphabet to use for the sequences
+        seed: Seed for the random number generator
+
+    Returns:
+        np.ndarray: Array of shape (N, L) containing the random sequences
+    """
+    import seqpro as sp
+    if isinstance(alphabet, str):
+        if alphabet == "DNA":
+            alphabet = sp.DNA
+        elif alphabet == "RNA":
+            alphabet = sp.RNA
+        elif alphabet == "AA":
+            alphabet = sp.AA 
+    seqs = sp.random_seqs(shape=(N, L), alphabet=alphabet, seed=seed)
+    if as_str:
+        
+        seqs = [seq.tobytes().decode() for seq in seqs]
+    return seqs
+
+ 

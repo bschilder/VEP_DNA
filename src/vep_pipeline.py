@@ -9,6 +9,7 @@ import pooch
 
 import src.utils as utils
 import src.genvarloader as GVL
+import genvarloader as gvl
 
 def get_model_to_metric_map():
     """
@@ -20,7 +21,10 @@ def get_model_to_metric_map():
     return {
         "spliceai": ["VEP_donor","VEP_acceptor"],
         "spliceai_mm": ["VEP_donor","VEP_acceptor"],
-        "flashzoi": ["delta_mean","delta_abs_mean","pca_css_mean"],
+        "flashzoi": ["delta_mean",
+                     "delta_abs_mean",
+                     "delta_pow2_mean",
+                     "pca_css_mean"],
         "evo2_7b": ["VEP"],
         "evo2_40b": ["VEP"],
         "evo2_7b_base": ["VEP"],
@@ -37,6 +41,8 @@ def vep_pipeline(site_ds,
                  limit_sites=None,
                  force=False,
                  checkpoint_frequency="site",
+                 extra_samples=["REF","consensus"], 
+                 site_filters=None,
                  device=None,
                  verbose=True):
     """
@@ -54,9 +60,18 @@ def vep_pipeline(site_ds,
             In terms of frequency: site << sample < ploid
             "site": Save after each site is complete
             "sample": Save after each sample is complete
-            "ploid": Save after each ploid is complete 
+            "ploid": Save after each ploid is complete
+        extra_samples (list): A list of extra samples to include.
+            Default is ["REF","consensus"]
+        site_filters (dict): A dictionary of site filters. 
+            This allows for filtering which sites (i.e. site-only variants to mutate sequences with) to run 
+            without affecting the structure of the GVL/xarray datasets which may contain the full set of sites.
+            Keys are column names, values are values to filter on.
+            If a value is a list, the site must be in the list.
+            If a value is an int, the site must be greater than or equal to the value.
+            If a value is a str, the site must contain the value.
         verbose (bool): If True, print verbose output.
-        device (str): Device to run the model on.
+        device (str): Device to run the model on. 
     """ 
 
     # Check checkpoint_frequency is valid
@@ -70,12 +85,36 @@ def vep_pipeline(site_ds,
             xr_ds_path=xr_ds_path,
             all_models=all_models, 
             site_ds=site_ds,
+            extra_samples=extra_samples,
             force=force>1
         )
 
-    # Gather metadata    
-    all_samples = site_ds.dataset.samples
+    if verbose:
+        print(f"xarray Dataset dimensions: {xr_ds.dims}")
+
+    if xr_ds_path is None:
+        if verbose:
+            print("Warning: No xr_ds_path provided, dataset will not be saved.")
+    else:
+        if verbose:
+            print(f"Dataset will be saved to {xr_ds_path}")
+
+
+    # Gather metadata: samples
+    all_samples = get_all_samples(site_ds, extra_samples=extra_samples)
+
+    # Get REF dataset
+    if "REF" in all_samples:
+        ds_ref, site_ds_ref = GVL.get_reference_dataset(site_ds, verbose=verbose)
+        if ds_ref is None:
+            all_samples = [s for s in all_samples if s != "REF"] 
+        
+    # Gather metadata: ploidy
     all_ploid = xr_ds.coords["ploid"].values.tolist()
+    if all_models is None:
+        all_models = list(xr_ds.data_vars.keys())
+    if run_models is None:
+        run_models = all_models
 
     # Iterate over models
     for model_name in tqdm(run_models, 
@@ -103,13 +142,25 @@ def vep_pipeline(site_ds,
         # sites_ds.sites contains all the sites provided to DatasetWithSites.
         # site_ds.rows contains all the sites provided to DatasetWithSites mapped onto each region in the BED file input to the GVL dataset, resulting in a many:many mapping between regions and sites
 
+        region_to_site = site_ds.rows
+
+        # Filter the sites without affecting the structure of the GVL/xarray datasets
+        if site_filters is not None:
+            for fk, fv in site_filters.items():
+                if isinstance(fv, list):
+                    region_to_site = region_to_site.filter(pl.col(fk).is_in(fv))
+                elif isinstance(fv, int):
+                    region_to_site = region_to_site.filter(pl.col(fk)>=fv)
+                elif isinstance(fv, str):
+                    region_to_site = region_to_site.filter(pl.col(fk).str.contains(fv)) 
+        
         # Get a single region per site, centered on that site
         # This avoid unncessary iterations over multiple regions per site
-        region_to_site = (site_ds.rows
+        region_to_site = (region_to_site
                           .select(pl.col("region_idx")==pl.col("site_idx"))
                           .with_row_index()
                           .filter(pl.col("region_idx")==True)
-                          )
+                          ) 
         
         if region_to_site.height == 0:
             if verbose:
@@ -118,15 +169,14 @@ def vep_pipeline(site_ds,
         
         # Iterate over sites
         for row_idx in tqdm(region_to_site["index"],
-                         desc="Iterating over sites",
-                         disable=verbose<0,
-                         leave=False):
+                            desc="Iterating over sites",
+                            disable=verbose<0,
+                            leave=False):
             
             # Get site metadata
             site = site_ds.rows[row_idx]
             site_idx = site['site_idx'][0]
-            site_name = site["name"][0]
-            chrom = f'chr{str(site["chrom"][0]).replace("chr","")}'
+            site_name = site["name"][0] 
 
             # --- Limit the number of sites for testing --- #
             if limit_sites is not None and site_idx>limit_sites:
@@ -164,20 +214,43 @@ def vep_pipeline(site_ds,
                         continue  
 
                     # Extract and convert sequences
-                    ## Get the wildtype (wt) sequence
-                    # use region_idx to get the correct sequence
-                    seq_wt = GVL.get_wt_haps(site_ds=site_ds, 
-                                             row_idx=row_idx,
-                                             sample_idx=sample_idx,
-                                             ploid_idx=ploid_idx, 
-                                             as_str=True)
-                    ## Get the mutated (mut) sequence
-                    # use region_idx to get the correct sequence
-                    seq_mut = GVL.get_mut_haps(site_ds=site_ds, 
-                                               row_idx=row_idx,
-                                               sample_idx=sample_idx,
-                                               ploid_idx=ploid_idx, 
-                                               as_str=True)           
+                    if sample_name == "REF" and site_ds_ref is not None:
+                        # Skip the second ploid because the REF genome is haploid
+                        if ploid_idx == 1:
+                            continue
+                        ## Get the wildtype (wt) sequence
+                        seq_wt = GVL.get_wt_haps(site_ds=site_ds_ref, 
+                                                 row_idx=row_idx,
+                                                 sample_idx=0, # all samples are REF, just use the first one
+                                                 ploid_idx=ploid_idx, 
+                                                 as_str=True)
+                        ## Get the mutated (mut) sequence
+                        seq_mut = GVL.get_mut_haps(site_ds=site_ds_ref, 
+                                                   row_idx=row_idx,
+                                                   sample_idx=0, # all samples are REF, just use the first one
+                                                   ploid_idx=ploid_idx, 
+                                                   as_str=True)        
+
+                    elif sample_name == "consensus":
+                        # consensus_seq = GVL.get_consensus_sequence(site_ds=site_ds, 
+                        #                                            region_idx=row_idx,
+                        #                                            as_str=True, 
+                        #                                            verbose=verbose>1)
+                        continue # TODO: figure out how to inject site-only variants into the consensus sequence
+
+                    else:
+                        ## Get the wildtype (wt) sequence
+                        seq_wt = GVL.get_wt_haps(site_ds=site_ds, 
+                                                row_idx=row_idx,
+                                                sample_idx=sample_idx,
+                                                ploid_idx=ploid_idx, 
+                                                as_str=True)
+                        ## Get the mutated (mut) sequence
+                        seq_mut = GVL.get_mut_haps(site_ds=site_ds, 
+                                                row_idx=row_idx,
+                                                sample_idx=sample_idx,
+                                                ploid_idx=ploid_idx, 
+                                                as_str=True)           
                     # Run the model
                     if verbose>1:
                         print(f"Running VEP: {model_name}, {site_name}, {sample_name}, {ploid_idx}")
@@ -204,7 +277,7 @@ def vep_pipeline(site_ds,
                                     sample=sample_name, 
                                     ploid=ploid_name, 
                                     slot=k)
-                                    ] = utils.as_numpy(v)
+                                    ] = utils.as_numpy(v) 
                             
                     # Get the extra slots data
                     extra_slots = {"time_total":time.time()-start_time,
@@ -242,7 +315,7 @@ def vep_pipeline(site_ds,
 
     # Return the results as an xarray dataset
     return xr_ds
-            
+
 
 def init_or_load_xarray_dataset(xr_ds_path,  
                                 site_ds,
@@ -261,6 +334,7 @@ def init_or_load_xarray_dataset(xr_ds_path,
                                              "len_seq_wt",
                                              "len_seq_mut"
                                              ],
+                                extra_samples=["REF","consensus"],
                                 force=False,
                                 mode="w",
                                 **kwargs):
@@ -278,7 +352,7 @@ def init_or_load_xarray_dataset(xr_ds_path,
         force (bool): If True, overwrite existing dataset
         
     Returns:
-        xarray.Dataset: The initialized or loaded dataset
+        xarray.Dataset: The initialized or loaded Dataset
     """
     import xarray as xr
     import dask.array as da
@@ -305,7 +379,7 @@ def init_or_load_xarray_dataset(xr_ds_path,
     if all_sites is None:
         all_sites = site_ds.rows["name"].unique().to_list()# Skip the first row (WT)
     if all_samples is None:
-        all_samples = site_ds.dataset.samples
+        all_samples = get_all_samples(site_ds, extra_samples=extra_samples)
     if all_ploid is None:
         all_ploid = ["0","1"] # Humans are diploid, so they have two haplotypes
         
@@ -326,14 +400,14 @@ def init_or_load_xarray_dataset(xr_ds_path,
             print(f"Loading existing results from {xr_ds_path}")
             return xr.open_dataset(xr_ds_path, concat_characters=True)
     
-        print(f"Initializing new dataset at {xr_ds_path}")
+        print(f"Initializing new Dataset at {xr_ds_path}")
     else:
-        print("No zarr path provided, initializing empty dataset")
+        print("No zarr path provided, initializing empty Dataset")
         
     # Initialize the data arrays
     data_vars = {}
     for model_name in tqdm(all_models, 
-                           desc="Initializing data arrays",
+                           desc="Initializing DataArrays",
                            leave=False):
         
         # Get the slots for the model
@@ -370,14 +444,14 @@ def init_or_load_xarray_dataset(xr_ds_path,
         )
     
     # Create the xarray dataset
-    print(f"Creating xarray dataset with {len(data_vars)} model(s)")
+    print(f"Creating xarray Dataset with {len(data_vars)} model(s)")
     ds = xr.Dataset(data_vars=data_vars, **kwargs)
     
     # Save to zarr file
     if xr_ds_path is not None:
-        print(f"Saving xarray dataset to {xr_ds_path}")
+        print(f"Saving xarray Dataset to {xr_ds_path}")
         ds.to_zarr(xr_ds_path, mode=mode)
-        print(f"xarray dataset saved to {xr_ds_path}")
+        print(f"xarray Dataset saved to {xr_ds_path}")
     
     return ds
  
@@ -520,7 +594,7 @@ def vep_pipeline_onekg(bed,
                        run_models = None,
                         all_models = None,
                         cohort = "1000_Genomes_on_GRCh38",
-                        variant_set = "clinvar_utr_snv",
+                        site_filters=None,
                         window_len = 2**18,
                         limit_regions = None,
                         limit_chroms = None,
@@ -529,6 +603,7 @@ def vep_pipeline_onekg(bed,
                         force_gvl = False,
                         force_vep = False,
                         verbose = True,
+                        variant_set = "clinvar_utr_snv",
                         checkpoint_frequency = "site"):
     """
     Run the VEP pipeline for the 1000 Genomes project.
@@ -551,6 +626,13 @@ def vep_pipeline_onekg(bed,
             "site": Checkpoint after each site is processed.
             "sample": Checkpoint after each sample is processed.
             "ploid": Checkpoint after each ploid is processed.
+        site_filters (dict): A dictionary of site filters. 
+            This allows for filtering which sites (i.e. site-only variants to mutate sequences with) to run 
+            without affecting the structure of the GVL/xarray datasets which may contain the full set of sites.
+            Keys are column names, values are values to filter on.
+            If a value is a list, the site must be in the list.
+            If a value is an int, the site must be greater than or equal to the value.
+            If a value is a str, the site must contain the value.
 
     Returns:
         xarray.Dataset: The results of the VEP pipeline.
@@ -607,29 +689,34 @@ def vep_pipeline_onekg(bed,
             gvl.Dataset.open(ds_path, reference=reference)
             .with_seqs("haplotypes")
             .with_len(window_len)
-        )
+        ) 
 
         # Import sites_ds
         # Convert BED to sites
         sites_chrom = cv.bed_to_sites(bed_chrom)
-        site_ds = gvl.DatasetWithSites(ds, sites_chrom) 
-        # Add the site_name column
-        GVL.add_site_name(site_ds)
+
+        # Create site_ds and site_ds_ref objects
+        try:
+            site_ds = gvl.DatasetWithSites(ds, sites_chrom) 
+        except Exception as e:
+            print(f"Error creating site_ds: {e}")
+            continue
 
         # Create path for results file
         xr_ds_path = os.path.join(results_dir, f"{chrom}.zarr") 
         
         # Run VEP pipeline
         xr_ds = vep_pipeline(site_ds=site_ds, 
-                                xr_ds_path=xr_ds_path,
-                                run_models=run_models,
-                                all_models=all_models,  
-                                verbose=verbose,
-                                force=force_vep,
-                                limit_samples=limit_samples,
-                                limit_sites=limit_sites,
-                                checkpoint_frequency=checkpoint_frequency
-                                )
+                             xr_ds_path=xr_ds_path,
+                             run_models=run_models,
+                             all_models=all_models,  
+                             verbose=verbose,
+                             force=force_vep,
+                             limit_samples=limit_samples,
+                             limit_sites=limit_sites,
+                             checkpoint_frequency=checkpoint_frequency,
+                             site_filters=site_filters
+                             )
         
     return xr_ds
 
@@ -661,8 +748,34 @@ def load_vep_results(xr_ds_path,
             df = df.dropna(subset=dropna_subset)
         
         if verbose:
-            print(df.shape)
-            print("sites:",df["site"].nunique())
-            print("samples:",df["sample"].nunique())
+            print("After filtering:")
+            print(" - rows:",df.shape[0])
+            print(" - sites:",df["site"].nunique())
+            print(" - samples:",df["sample"].nunique())
         return df
     return xr_ds
+
+
+def get_all_samples(site_ds, 
+                    extra_samples=["REF","consensus"]):
+    """
+    Get all samples from a site_ds.
+
+    Parameters:
+        site_ds (gvl.DatasetWithSites): The site_ds to get the samples from.
+        extra_samples (list): A list of extra samples to include.
+    
+    Returns:
+        list: A list of all samples.
+    """
+    all_samples = site_ds.dataset.samples
+    if extra_samples is not None:
+        # Must be added AFTER the default samples, or else the sample_idx will be wrong
+        all_samples =  all_samples + extra_samples
+    return all_samples
+
+def get_all_sites(site_ds):
+    """
+    Get all sites from a site_ds.
+    """
+    return site_ds.rows["name"].unique().to_list()

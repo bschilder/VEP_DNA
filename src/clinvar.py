@@ -72,6 +72,64 @@ def vcf_to_df(vcf_file=None,
     
     return vcf_df 
 
+
+def simplify_annotations(bed,
+                         maps=None):
+    """
+    Simplify the annotations in the ClinVar DataFrame.
+
+    Args:
+        bed (pl.DataFrame): The ClinVar DataFrame.
+        maps (list): A list of dictionaries, each containing the input column, output column, and map.
+            e.g. [{"input_col": "CLNSIG", "output_col": "CLNSIG_simple", 
+                    "map": {"Benign":"benign", 
+                            "Likely_benign":"likely_benign", 
+                            "Benign/Likely_benign":"likely_benign", 
+                            "Pathogenic/Likely_pathogenic":"likely_path",
+                              "Pathogenic":"path", 
+                              "Likely_pathogenic":"likely_path",
+                              ...
+                              }]
+    Returns:
+        pl.DataFrame: The simplified ClinVar DataFrame.
+    """
+    if maps is None:
+        maps = [ 
+                {"input_col": "CLNSIG",
+                "output_col": "CLNSIG_simple",
+                "map": {
+                    'Benign':"benign",
+                    'Likely_benign':"likely_benign",
+                    'Benign/Likely_benign':"likely_benign",
+                    'Pathogenic/Likely_pathogenic':"likely_path",
+                    'Pathogenic':"path",
+                    'Likely_pathogenic':"likely_path",
+                    'Pathogenic/Likely_pathogenic/Pathogenic,_low_penetrance':"likely_path",
+                    'Benign|other':"benign",
+                    'Benign|confers_sensitivity':"benign"
+                    }},
+            
+                {"input_col": "CLNSIG",
+                "output_col": "CLNSIG_super_simple",
+                "map": {
+                    'Benign':"benign",
+                    'Likely_benign':"benign",
+                    'Benign/Likely_benign':"benign",
+                    'Pathogenic/Likely_pathogenic':"path",
+                    'Pathogenic':"path",
+                    'Likely_pathogenic':"path",
+                    'Pathogenic/Likely_pathogenic/Pathogenic,_low_penetrance':"path",
+                    'Benign|other':"benign",
+                    'Benign|confers_sensitivity':"benign"
+                    }},
+        ]
+
+    for map in maps:
+        bed = bed.with_columns(pl.col(map["input_col"]).replace_strict(map["map"]).alias(map["output_col"]))
+     
+    bed = bed.with_columns(pl.col("GENEINFO").str.split(":").list.first().alias("GENE"))
+    return bed
+
 def add_variant_name(df,
                     chrom_col='chrom',
                     start_col='chromStart',
@@ -120,9 +178,9 @@ def df_to_bed(vcf_df,
     bed = vcf_df.rename({
         'CHROM': 'chrom',
         'POS': 'chromStart',
-        "CLNREVSTAT_score":"score"
     }).with_columns([
         # pl.lit(None).alias('strand'),
+        (pl.col("CLNREVSTAT_score").alias("score")),
         (pl.col('chromStart') + pl.col('REF').str.len_chars()).alias('chromEnd'),
         (pl.col('ALT').list.join(',').alias('ALT')),
     ])
@@ -146,6 +204,8 @@ def df_to_bed(vcf_df,
         'MC_term',
         "AF_ESP", "AF_EXAC", "AF_TGP", "ALLELEID", "CLNDISDB", "CLNDN",
         "CLNHGVS", "CLNREVSTAT", "CLNSIG", "CLNVC", "CLNVCSO", "GENEINFO",
+        "CLNREVSTAT_score"
+        
         # "MC", "ORIGIN", "RS"
     ]).filter(pl.col('chrom').str.contains('^[0-9]+$|^X$|^Y$'))
 
@@ -208,8 +268,7 @@ def bed_to_sites(bed):
     sites =  bed.rename({
         'chrom': 'CHROM',
         'chromStart': 'POS',
-        'chromEnd': 'POS_END',
-        "score": "CLNREVSTAT_score"
+        'chromEnd': 'POS_END'
     })
 
     sites = sites.select([
@@ -225,9 +284,24 @@ def bed_to_sites(bed):
 def read_bed(path, 
              schema_overrides=None,
              separator='\t',
+             simplify=True,
              **kwargs):
     """
-    Read a BED file created by the clinvar submodule for usew with GenVarloader.
+    Read a BED file created by the clinvar submodule for use with GenVarloader.
+
+    Args:
+        path (str): The path to the BED file.
+        schema_overrides (dict): A dictionary of column names and their data types.
+        separator (str): The separator used in the BED file.
+        simplify (bool): Whether to simplify the annotations.
+        **kwargs: Additional arguments to pass to the pl.read_csv function.
+
+    Returns:
+        pl.DataFrame: The BED file as a Polars DataFrame.
+    
+    Example:
+        >>> bed = cv.read_bed("data/UTR/clinvar_utr_snv.bed.gz", simplify=True)
+        >>> bed
     """
 
     if schema_overrides is None:
@@ -244,6 +318,10 @@ def read_bed(path,
         separator=separator,
         **kwargs
     ).drop_nulls(subset=['ALT'])
+
+    if simplify:
+        bed = simplify_annotations(bed)
+
     return bed
 
 def filter_df(vcf_df,

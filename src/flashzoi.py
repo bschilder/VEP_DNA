@@ -8,34 +8,33 @@ from torch.amp import autocast
 from typing import List
 
 from borzoi_pytorch import Borzoi
-import src.utils as ut
+
 import src.dimreduction as dr
 import src.utils as utils
 import src.vep_metrics as vm
+import src.genvarloader as GVL
 
 # All models: https://huggingface.co/johahi
 # 'johahi/borzoi-replicate-[0-3][-mouse]'
 DEFAULT_MODEL_NAME = "johahi/flashzoi-replicate-0" 
 
-def one_hot_seq(seq: str) -> np.ndarray:
-    mapping = {'A':0,'C':1,'G':2,'T':3}
-    arr = np.zeros((4, len(seq)), dtype=np.float32)
-    for i, b in enumerate(seq):
-        idx = mapping.get(b)
-        if idx is not None:
-            arr[idx, i] = 1.0
-    return arr
-
-def load_model(model_name=DEFAULT_MODEL_NAME):
-    return Borzoi.from_pretrained(model_name)
+def load_model(model_name=DEFAULT_MODEL_NAME, 
+               device=None,
+               eval=False):
+    model = Borzoi.from_pretrained(model_name)
+    if device is not None:
+        model.to(device)
+    if eval:
+        model.eval()
+    return model
 
 def load_tokenizer(model_name=DEFAULT_MODEL_NAME):
-    return one_hot_seq
+    return GVL.bytearray_to_ohe_torch
 
 def score_all_tracks(seq: str, 
                      model=None, 
                      tokenizer=None,
-                     run_squeeze: bool = True,
+                     run_squeeze: bool = False,
                      device=None) -> np.ndarray:
     """
     Score all tracks of a sequence.
@@ -50,23 +49,27 @@ def score_all_tracks(seq: str,
     """
     if model is None:
         model = load_model()
+        model.to(device)
+        model.eval()
     if tokenizer is None:
         tokenizer = load_tokenizer()
     if device is None:
-        device = ut.get_device()
+        device = utils.get_device()
 
     # Convert numpy array to torch tensor add batch dimension
-    x = torch.from_numpy(one_hot_seq(seq)[None]).to(device) 
-    model.to(device)
+    x = tokenizer(seq).to(device) 
+    
+    # model.to(device)
     
     # Run the model
     with torch.no_grad(), autocast("cuda", torch.float16):
         # model(x) shape: (1, n_tissues, L)
         trks = model(x)
-        if run_squeeze:
-            return trks.squeeze()
-        else:
-            return trks
+    del x
+    if run_squeeze:
+        return trks.squeeze()
+    else:
+        return trks
 
 def run_vep(seq_wt, 
             seq_mut, 
@@ -105,16 +108,28 @@ def run_vep(seq_wt,
                                model=model, 
                                tokenizer=tokenizer,
                                run_squeeze=run_squeeze)
+                               
     # Mut
     trks_mut = score_all_tracks(seq=seq_mut, 
                                 model=model, 
                                 tokenizer=tokenizer,
                                 run_squeeze=run_squeeze)    
-
+                                
+    # Compute delta metrics
     results["delta"] = trks_mut - trks_wt
     results["delta_mean"] = float(results["delta"].mean())
     results["delta_abs_mean"] = float(results["delta"].abs().mean())
+    results["delta_pow2_mean"] = float(results["delta"].pow(2).mean())
+    
+    for k,v in results.items():
+        if isinstance(v, torch.Tensor):
+            results[k] = v.cpu().numpy()
 
+    del trks_wt
+    del trks_mut
+    torch.cuda.empty_cache()
+    
+    # Run PCA
     if run_pca:
         # Compute cosine similarity between the PCA eigenvectors of the WT and MUT tracks
         # along the track axis
@@ -127,8 +142,11 @@ def run_vep(seq_wt,
                                 # dim=1 returns compute cos sim along the 100PC axis
                                 dim=0, 
                                 verbose=verbose)
-        results["pca_css"] = pca_css.cpu()
-        results["pca_css_mean"] = pca_css.mean().cpu()
+        results["pca_css"] = pca_css.cpu().numpy()
+        results["pca_css_mean"] = pca_css.mean().cpu().numpy()
+        
+        del pca, pca_css
+        torch.cuda.empty_cache()
 
     return results
 
@@ -180,3 +198,50 @@ def load_targets(species: List[str] = ["human","mouse"],
     targets["top_tissue"] = targets["tissue"].apply(lambda x: x if x in top_tissues else "other")
     
     return targets
+
+
+def test_batch_sizes(batch_sizes: List[int] = range(5,100),
+                     L: int = 2**18,
+                     model=None,
+                     tokenizer=None,
+                     device=None,
+                     verbose=True):
+    """
+    Iteratively increase the batch size (number of sequences) 
+    to see how large the batch size can be before running out of GPU memory.
+    Args:
+        batch_sizes: List of batch sizes to test
+        L: Length of the sequence
+        model: Model to use
+        tokenizer: Tokenizer to use
+        device: Device to use
+        verbose: If True, print verbose output
+    Returns:
+        List[int]: List of batch sizes that can be run without running out of GPU memory
+    """
+    if model is None:
+        model = load_model()
+    if tokenizer is None:
+        tokenizer = load_tokenizer()
+    if device is None:
+        device = ut.get_device()
+    results = {}
+    for N in batch_sizes:
+        if verbose:
+            print("batch size:",N)
+        seq = utils.random_seqs(N=N, L=L) 
+        
+        # with torch.no_grad(), autocast("cuda", torch.float16):
+        #     # input shape: (batch_size, one_hot, seq_length)
+        #     # output shape: : (batch_size, n_tissues, sequence_length)
+        #     trks = model(x)
+
+        try:
+            trks = score_all_tracks(seq, model=model, tokenizer=tokenizer, device=device)
+            print(trks.shape)
+            results[N] = trks.shape[0]
+        except Exception as e:
+            print(e)
+            break
+    print(f"--- Max batch size @ L={L}: {N-1} ---")
+    return results

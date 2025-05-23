@@ -5,6 +5,7 @@ import pandas as pd
 import genvarloader as gvl
 import numpy as np
 import polars as pl
+import numba as nb
 import pooch
 from tqdm.auto import tqdm
 
@@ -175,8 +176,11 @@ def string_to_bytearray(str):
         array([b'A', b'C', b'G', b'T'], dtype=uint8)
     """
     if isinstance(str, np.ndarray):
-        return str
-    return np.array(list(str)).astype('|S1')
+        return str.astype('|S1')
+    elif isinstance(str, list):
+        return np.array([np.array(list(s)).astype('|S1') for s in str])
+    else:
+        return np.array(list(str)).astype('|S1') 
 
 def bytearray_to_string(byte_arr):
     """
@@ -393,3 +397,291 @@ def add_site_name(site_ds, force=False):
             pl.lit("_") + pl.col("ALT")
             ).alias("site_name")
             )
+        
+
+
+@nb.njit(cache=True)
+def stack_ploidy(arr):
+    """Optimized ploidy stacking using numba"""
+    n_samples = arr.shape[0]
+    seq_len = arr.shape[2]
+    result = np.empty((n_samples * 2, seq_len), dtype=arr.dtype)
+    for i in range(n_samples):
+        result[i*2] = arr[i,0]
+        result[i*2+1] = arr[i,1]
+    return result
+
+@nb.njit(parallel=True, cache=True)
+def _create_msa_fast(ref_coords, seq_arr, min_coord, max_coord):
+    """Numba-accelerated core MSA creation function"""
+    n_seqs = ref_coords.shape[0]
+    alignment_length = max_coord - min_coord + 1
+    msa = np.full((n_seqs, alignment_length), ord('-'), dtype=np.int8)
+    
+    # Pre-compute coordinate offsets
+    coord_offsets = ref_coords - min_coord
+    
+    for i in nb.prange(n_seqs):
+        coords = coord_offsets[i]
+        seq = seq_arr[i]
+        seq_len = len(coords)
+        for j in range(seq_len):
+            msa[i, coords[j]] = seq[j]
+            
+    return msa
+
+def create_msa(ref_coords, seq_arr):
+    """
+    Create a gappy Multiple Sequence Alignment from a ragged 2D array using reference coordinates.
+    
+    This will take a 2D array of the reference coordinates:
+        ref_coords = [
+        [100, 101, 103],  # First sequence has bases at positions 100, 101, 103
+        [100, 102, 103]   # Second sequence has bases at positions 100, 102, 103
+        ]
+    And a 2D array of the sequences (left-aligned):
+        seq_arr = [
+            ['A', 'T', 'G'],  # First sequence
+            ['A', 'C', 'G']   # Second sequence
+        ] 
+    And return a gappy Multiple Sequence Alignment that is aligned at all positions.  
+        A T - G  # First sequence
+        A - C G  # Second sequence
+    Args:
+        ref_coords: 2D array of reference coordinates (sequence x position) indicating where each position maps in the reference genome
+        seq_arr: 2D array of sequences (sequence x position) with ragged right end
+        
+    Returns:
+        2D array containing the gappy MSA
+    """
+    import time
+    start_time = time.time()
+    
+    assert ref_coords.shape == seq_arr.shape, f"Shapes do not match: ref_coords.shape ({ref_coords.shape}) != seq_arr.shape ({seq_arr.shape})"
+
+    # Convert input arrays to numpy arrays if they aren't already
+    ref_coords = np.asarray(ref_coords)
+    seq_arr = np.asarray(seq_arr)
+    
+    # Find the min and max reference coordinates across all sequences
+    min_coord = np.min(ref_coords)
+    max_coord = np.max(ref_coords)
+    
+    # Optimize byte conversion using vectorized operations
+    if seq_arr.dtype == np.dtype('|S1'):
+        seq_arr_int = np.frombuffer(seq_arr.tobytes(), dtype=np.int8).reshape(seq_arr.shape)
+    else:
+        seq_arr_int = np.array([[ord(c) for c in row] for row in seq_arr], dtype=np.int8)
+    
+    # Create MSA using numba-accelerated function
+    msa = _create_msa_fast(ref_coords, seq_arr_int, min_coord, max_coord)
+    
+    # Convert back to bytes array using view
+    msa = msa.view('|S1')
+    
+    end_time = time.time()
+    print(f"MSA for {seq_arr.shape[0]} sequences done {end_time - start_time:.2f} seconds")
+            
+    return msa
+
+
+def preview_msa(msa, max_len=None):
+    """
+    Preview the MSA by printing the sequences with differences.
+
+    Args:
+        msa: 2D array containing the gappy MSA
+        max_len: Maximum number of columns to print
+
+    Returns:
+        None
+    """
+    # Convert byte arrays to strings and find columns with differences using numpy vectorization
+    msa_str = np.array([[x.decode('utf-8') for x in row] for row in msa], dtype='U1')  # Convert bytes to unicode strings row by row
+
+    # Find columns with differences using numpy operations
+    col_unique = np.apply_along_axis(lambda x: len(np.unique(x)), 0, msa_str)
+    diff_cols = np.where(col_unique > 1)[0]
+
+    # Limit the number of columns if max_len is specified
+    if max_len is not None and len(diff_cols) > max_len:
+        diff_cols = diff_cols[:max_len]
+
+    # Print sequences showing only columns with differences using numpy indexing
+    for seq in msa_str:
+        print(''.join(seq[diff_cols]))
+
+
+
+@nb.njit(nogil=True, cache=True)
+def _get_consensus(msa_uint8):
+    n_cols = msa_uint8.shape[1]
+    consensus = np.zeros(n_cols, dtype=np.uint8)
+    
+    for col in range(n_cols):
+        # Count occurrences of each value
+        counts = np.zeros(256, dtype=np.int32)
+        for row in range(msa_uint8.shape[0]):
+            val = msa_uint8[row, col]
+            counts[val] += 1
+            
+        # Find most common value
+        max_count = -1
+        max_val = 0
+        for val in range(256):
+            if counts[val] > max_count:
+                max_count = counts[val]
+                max_val = val
+                
+        consensus[col] = max_val
+        
+    return consensus
+
+def create_consensus_seq(msa, 
+                         as_str=False,
+                         verbose=True):
+    """
+    Create a consensus sequence from a gappy MSA.
+    
+    Args:
+        msa: 2D array containing the gappy MSA made with create_msa
+        as_str: Whether to return the consensus sequence as a string
+
+    Returns:
+        array: The consensus sequence
+    """
+    import time
+    start_time = time.time()
+    # Convert to uint8 and reshape
+    msa_uint8 = msa.view(np.uint8).reshape(msa.shape[0], -1)
+
+    # Get consensus using numba function
+    consensus_seq = _get_consensus(msa_uint8)
+
+    end_time = time.time()
+    if verbose:
+        print(f"Consensus sequence of {msa.shape[0]} sequences created in {end_time - start_time:.2f} seconds")
+
+    if as_str is True:
+        consensus_seq = bytearray_to_string(consensus_seq)
+    else:
+        consensus_seq = consensus_seq.view('|S1')
+    return consensus_seq
+
+def get_reference_path(site_ds,
+                       verbose=True):
+    """
+    Get the reference path from the site_ds.
+
+    Parameters:
+        site_ds (gvl.DatasetWithSites): The site_ds to load the reference genome from.
+        verbose (bool): Whether to print verbose output.
+
+    Returns:
+        str: The reference path.
+    """
+    # Dev version of GVL has a reference attribute in the dataset
+    try:
+        ref_path = str(site_ds.dataset.reference.path)
+    # Legacy version of GVL does not have a reference attribute in the dataset
+    except:
+        ref_path = None
+        if verbose:
+            print("No reference genome provided, skipping REF samples")
+    return ref_path
+
+def get_reference_dataset(site_ds,
+                          verbose=True,
+                          **kwargs):
+    """
+    Load the reference genome from the site_ds.
+
+    Parameters:
+        site_ds (gvl.DatasetWithSites): The site_ds to load the reference genome from.
+        verbose (bool): Whether to print verbose output.
+        **kwargs: Additional arguments to pass to the gvl.Dataset.open() function.
+
+    Returns:
+        A tuple of length 2:
+        gvl.Dataset: The reference genome.
+        gvl.DatasetWithSites: The site_ds with the reference genome. 
+        None, None: If no reference genome path is included in the site_ds.
+    """
+    # Get the reference path
+    ref_path = get_reference_path(site_ds, verbose=verbose)
+    
+    # If a reference path is provided, load the reference genome
+    if ref_path is not None: 
+        # Import GVL database
+        ds_ref = (
+            gvl.Dataset.open(site_ds.dataset.path, reference=ref_path, **kwargs)
+            .with_seqs("reference")
+            .with_len(site_ds.dataset.output_length)
+        ) 
+        # Create site_ds and site_ds_ref objects
+        site_ds_ref = gvl.DatasetWithSites(ds_ref, site_ds.sites.rename({"chrom":"CHROM",
+                                                                         "chromStart":"POS"})) 
+        if verbose:
+            print(f"Using reference genome from {ref_path}")
+        return ds_ref, site_ds_ref
+    else:
+        return None, None
+    
+
+def get_consensus_sequence(site_ds,
+                           region_idx=None,
+                           sample_idx=None,
+                           as_str=False,
+                           verbose=True):
+    """
+    Load the consensus sequence from the a GVL Dataset
+
+    Parameters:
+        site_ds (gvl.DatasetWithSites): The site_ds to load the consensus sequence from.
+        region_idx (int): The index of the region to load the consensus genome from.
+        sample_idx (int): The index of the sample to load the consensus genome from.
+        as_str (bool): Whether to return the consensus sequence as a string.
+        verbose (bool): Whether to print verbose output.
+
+    Returns:
+        gvl.Dataset: The consensus genome.
+    """
+
+    ref_coords = stack_ploidy(site_ds[region_idx, ][0].ref_coords[sample_idx,])
+    seq_arr = stack_ploidy(site_ds.dataset.subset_to(samples=sample_idx, regions=region_idx)[:])
+    msa = create_msa(ref_coords, seq_arr)
+    consensus_seq = create_consensus_seq(msa, as_str=as_str, verbose=verbose)
+    return consensus_seq
+
+
+
+def bytearray_to_ohe_torch(seqs,
+                            verbose=False, 
+                            transpose=True,
+                            **kwargs): 
+    """
+    Convert a bytearray to a one-hot encoded torch tensor.
+    """
+    if verbose:
+        print(seqs.shape)
+        print(seqs)
+    import torch
+
+    if isinstance(seqs, str):
+        seqs = string_to_bytearray(seqs)[None]
+
+    # Convert sequences to one-hot encoding
+    ohe = utils.one_hot_seq(seqs, transpose=transpose, **kwargs)  # Changed to transpose=True to get correct shape
+    if verbose:
+        print(ohe.shape)
+
+    # Convert to torch tensor and permute dimensions to match expected shape
+    x = torch.from_numpy(ohe).permute(2, 0, 1)  # Permute to get [batch_size, ohe, seq_len]
+
+    # # Convert to float16
+    x = x.to(torch.float16) 
+
+    if verbose:
+        print(x.shape)
+
+    return x
