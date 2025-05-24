@@ -1,18 +1,31 @@
 # Source: https://github.com/Illumina/SpliceAI
 
-from keras.models import load_model
+from keras.models import load_model as _load_model
 from pkg_resources import resource_filename
 from spliceai.utils import one_hot_encode
 import numpy as np
 
+DEFAULT_MODEL_NAME = ('models/spliceai{}.h5'.format(x) for x in range(1, 6))
+
+def load_tokenizer():
+    return one_hot_encode
 
 def tokenize(seq, context = 10000):
     x = one_hot_encode('N'*(context//2) + seq + 'N'*(context//2))[None, :]
     return x
 
-def load_models():
-    paths = ('models/spliceai{}.h5'.format(x) for x in range(1, 6))
-    models = [load_model(resource_filename('spliceai', x)) for x in paths]
+def load_model(DEFAULT_MODEL_NAME=DEFAULT_MODEL_NAME,
+            #    device=None,
+            #    eval=False,
+               **kwargs):
+    
+    models = [load_model(resource_filename('spliceai', x)) for x in DEFAULT_MODEL_NAME]
+    
+    # Not sure if this applies to tensorflow models
+    # if device is not None:
+    #     models = [model.to(device) for model in models]
+    # if eval:
+    #     models = [model.to(device) for model in models]
     return models
 
 def run_model(seq, models=None):
@@ -30,7 +43,7 @@ def run_model(seq, models=None):
         >>> donor_prob = y[0, :, 2]
     """
     if models is None:
-        models = load_models()
+        models = load_model()
     x = tokenize(seq)
     y = np.mean([models[m].predict(x) for m in range(5)], axis=0)
     return y

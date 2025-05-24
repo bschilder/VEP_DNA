@@ -13,8 +13,16 @@ DEFAULT_MODEL_NAME = "multimolecule/spliceai"
 def load_tokenizer(model_name=DEFAULT_MODEL_NAME):
     return RnaTokenizer.from_pretrained(model_name)
 
-def load_model(model_name=DEFAULT_MODEL_NAME):
-    return SpliceAiModel.from_pretrained(model_name)
+def load_model(model_name=DEFAULT_MODEL_NAME,   
+               device=None,
+               eval=False, 
+               **kwargs):
+    model = SpliceAiModel.from_pretrained(model_name)
+    if device is not None:
+        model.to(device)
+    if eval:
+        model.eval()
+    return model
 
 def run_model(seq, 
               model=None,

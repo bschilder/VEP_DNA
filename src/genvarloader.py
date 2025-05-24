@@ -342,12 +342,16 @@ def haps_to_seqs(haps,
         str: The haplotype sequence(s)
     """
 
+    if haps.haps.ndim == 4 and haps.haps.shape[0] == 1:
+        haps.haps = haps.haps[0]
+
     # Extract haplotype sequences
     if haps.haps.ndim ==2:
         # ploid, seqlen
         seqs = haps.haps[ploid_idx]
     elif haps.haps.ndim ==3:
         # sample, ploid, seqlen
+        
         seqs = haps.haps[sample_idx, ploid_idx]
     else:
         raise ValueError(f"Invalid number of dimensions: {haps.haps.ndim}")
@@ -357,15 +361,15 @@ def haps_to_seqs(haps,
         seqs = seqs.squeeze()
     
     # Unstack ploidy if requested
-    if run_stack_ploidy is True:
+    if run_stack_ploidy:
         seqs = stack_ploidy(seqs)
     
     # Convert to string
-    if as_str is True:
+    if as_str:
         seqs = bytearray_to_string(seqs)
 
     # Print report 
-    if verbose is True:
+    if verbose:
         print(f"Haplotype sequence(s) extracted: {seqs}")
     return seqs
  
@@ -406,6 +410,11 @@ def add_site_name(site_ds, force=False):
 @nb.njit(cache=True)
 def stack_ploidy(arr):
     """Optimized ploidy stacking using numba"""
+
+    # If the array is already stacked, return it
+    if arr.ndim == 2:
+        return arr
+    
     n_samples = arr.shape[0]
     seq_len = arr.shape[2]
     result = np.empty((n_samples * 2, seq_len), dtype=arr.dtype)

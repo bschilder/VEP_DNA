@@ -21,7 +21,8 @@ DEFAULT_MODEL_NAME = "johahi/flashzoi-replicate-0"
 
 def load_model(model_name=DEFAULT_MODEL_NAME, 
                device=None,
-               eval=False):
+               eval=False,
+               **kwargs):
     model = Borzoi.from_pretrained(model_name)
     if device is not None:
         model.to(device)
@@ -71,7 +72,8 @@ def score_all_tracks(seq: str,
     
     # Run the model
     with torch.no_grad(), autocast("cuda", torch.float16):
-        # model(x) shape: (1, n_tissues, L)
+        # Input shape: (batch_size, one_hot, L)
+        # Output shape: (batch_size, n_tissues, L)
         trks = model(x)
     del x
     if run_squeeze:
@@ -208,6 +210,7 @@ def run_vep(seq_wt,
             run_squeeze: bool = True,
             run_pca: bool = False, 
             verbose: bool = True,
+            device=None,
             **kwargs):
     """
     Run the VEP pipeline on a sequence.
@@ -231,24 +234,27 @@ def run_vep(seq_wt,
         model = load_model()
     if tokenizer is None:
         tokenizer = load_tokenizer()
+    if device is None:
+        device = utils.get_device()
 
     results = {}
     # WT
     trks_wt = score_all_tracks(seq=seq_wt, 
                                model=model, 
                                tokenizer=tokenizer,
-                               run_squeeze=run_squeeze)
+                               run_squeeze=run_squeeze, 
+                               device=device)
                                
     # Mut
     trks_mut = score_all_tracks(seq=seq_mut, 
                                 model=model, 
                                 tokenizer=tokenizer,
-                                run_squeeze=run_squeeze)    
+                                run_squeeze=run_squeeze,
+                                device=device)    
                                 
     # Compute delta metrics
     results = compute_delta_metrics(trks_wt=trks_wt, 
                                     trks_mut=trks_mut, 
-                                    run_pca=run_pca, 
                                     verbose=verbose)
     
     # Compute PCA metrics

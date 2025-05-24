@@ -6,44 +6,146 @@ import numpy as np
 from tqdm.auto import tqdm
 import time
 import pooch
+import torch
 
 import src.utils as utils
 import src.genvarloader as GVL
 import genvarloader as gvl
 
-def get_model_to_metric_map():
+def get_model_to_batchsize_map(model_name=None,
+                               default=40):
+    """
+    Get a map of model names to their corresponding batch sizes.
+    """
+    bsmap = {
+        "spliceai": default,
+        "flashzoi": default,
+        "evo2_7b": default,
+        "evo2_40b": default,
+        "evo2_7b_base": default,
+        "evo2_40b_base": default,
+        "dnabert2": default,
+    }
+    if model_name is not None:
+        if model_name not in bsmap:
+            raise ValueError(f"Invalid model name: {model_name}. Must be one of: {', '.join(bsmap.keys())}")
+        return bsmap[model_name]
+    else:
+        return bsmap
+
+def get_model_to_metric_map(model_name=None):
     """
     Get a map of model names to their correspondingVEP metric names.
+    If model_name is provided, return the metric names for that model.
+
+    Parameters:
+        model_name (str): The name of the model to get the metric names for.
     
     Returns:
         dict: A dictionary mapping model names to their corresponding VEP metric names.
     """
-    return {
+    mmap = {
         "spliceai": ["VEP_donor","VEP_acceptor"],
         "spliceai_mm": ["VEP_donor","VEP_acceptor"],
         "flashzoi": ["delta_mean",
                      "delta_abs_mean",
                      "delta_pow2_mean",
                      "delta_max_max",
-                     "pca_css_mean"],
+                    #  "pca_css_mean"
+                     ],
         "evo2_7b": ["VEP"],
         "evo2_40b": ["VEP"],
         "evo2_7b_base": ["VEP"],
         "evo2_40b_base": ["VEP"],
         "dnabert2": ["VEP"]
     }
+    if model_name is not None:
+        if model_name not in mmap:
+            raise ValueError(f"Invalid model name: {model_name}. Must be one of: {', '.join(mmap.keys())}")
+        return mmap[model_name]
+    else:
+        return mmap
+
+def find_null_xarray(xr_ds):
+    """
+    Subset an xarray Dataset to where values are null.
+    """
+    return xr_ds.where(xr_ds.isnull(), drop=True)
+
+def xarray_subset_notnull(xr_ds, 
+                         model_name,
+                         query={},
+                         method="any",
+                         verbose=False):
+    """ 
+    Subset an xarray Dataset to where values are not null.
+    """
+    return xarray_subset_isnull(xr_ds, 
+                                model_name,
+                                query,
+                                method,
+                                invert=True,
+                                verbose=verbose)
+
+def xarray_subset_isnull(xr_ds, 
+                         model_name,
+                         query={},
+                         method="any",
+                         invert=False,
+                         verbose=False):
+    """
+    Subset an xarray Dataset to a specific model, site, sample, and ploid.
+
+    Parameters:
+        xr_ds (xarray.Dataset): The xarray Dataset to subset.
+        model_name (str): The name of the model to subset.
+        query (dict): The query to subset the xarray Dataset. e.g.:
+            {'site': 'chr22:17085084-17085085_G_C',
+            'sample': ['HG00111', 'HG00112', 'HG00114', 'HG00115', 'HG00116', 'HG00117'],
+            'ploid': ['0', '1'],
+            'slot': 'delta_max_max'}
+        method (str): The method to use to subset the xarray Dataset.
+            "any": Check if any values are null.
+            "all": Check if all values are null.
+            "int": Check if at least N values are null (int>0).
+            "float": Check if at least proportion of values are null (0<float<1).
+
+    Returns:
+        bool: True if the subset is null, False otherwise.
+    """
+    subset = xr_ds[model_name].loc[query]
+
+    subset_bool = subset.isnull()
+    if invert:
+        subset_bool = ~subset_bool
+    
+    if isinstance(method, str):
+        if method=="any":
+            return subset_bool.any()
+        elif method=="all":
+            return subset_bool.all()
+        else:
+            raise ValueError(f"Invalid method: {method}. Must be one of: any, all")
+    elif isinstance(method, int) and method>0:
+        # Check if at least N values are null
+        return subset_bool.sum()>=method
+    elif isinstance(method, float) and method<1 and method>0:
+        # Check if at least proportion of values are null
+        return (subset_bool.sum()/subset.size)>=method
+    else:
+        raise ValueError(f"Invalid method: {method}. Must be one of: any, all, int")
 
 def vep_pipeline(site_ds, 
                  run_models=None,
                  all_models=None,  
                  xr_ds=None,
                  xr_ds_path=None,
+                 max_seqs_per_batch=None, 
                  limit_samples=None,
                  limit_sites=None,
-                 max_seqs_per_batch=25, 
                  force=False,
                  checkpoint_frequency="site",
-                 extra_samples=["REF","consensus"], 
+                 extra_samples=["REF"], 
                  site_filters=None,
                  device=None,
                  verbose=True):
@@ -56,13 +158,14 @@ def vep_pipeline(site_ds,
         all_models (list): List of model names to initialize the xarray dataset with
         xr_ds (xarray.Dataset): Dataset to store results
         xr_ds_path (str): Path to the zarr store
+        max_seqs_per_batch (int): The maximum number of sequences to run the VEP pipeline in a single batch.
+            If None, the batch size will be determined by the model name according to get_model_to_batchsize_map().
         limit_samples (int): Maximum number of samples to run.
         limit_sites (int): Maximum number of sites to run.
         checkpoint_frequency (str): Frequency to checkpoint the dataset.
             In terms of frequency: site << sample < ploid
             "site": Save after each site is complete
-            "sample": Save after each sample is complete
-            "ploid": Save after each ploid is complete
+            "batch": Save after each sample batch is complete
         extra_samples (list): A list of extra samples to include.
             Default is ["REF","consensus"]
         site_filters (dict): A dictionary of site filters. 
@@ -81,6 +184,16 @@ def vep_pipeline(site_ds,
     if checkpoint_frequency not in checkpoint_frequency_opts:
         raise ValueError(f"Invalid checkpoint_frequency: {checkpoint_frequency}. Must be one of: {', '.join(checkpoint_frequency_opts)}")
 
+    # Check if xr_ds_path is provided
+    if xr_ds_path is None:
+            import uuid
+            xr_ds_path = os.path.join("/tmp", f"vep_pipeline_{uuid.uuid4().hex[:8]}.zarr")
+            if verbose:
+                print(f"Warning: No xr_ds_path provided, dataset will be saved to {xr_ds_path}")
+    else:
+        if verbose:
+            print(f"Dataset will be saved to {xr_ds_path}")
+
     # Initialize or load the dataset
     if xr_ds is None:
         xr_ds = init_or_load_xarray_dataset(
@@ -88,60 +201,61 @@ def vep_pipeline(site_ds,
             all_models=all_models, 
             site_ds=site_ds,
             extra_samples=extra_samples,
+            verbose=verbose,
             force=force>1
         )
 
     if verbose:
-        print(f"xarray Dataset dimensions: {xr_ds.dims}")
-
-    if xr_ds_path is None:
-        if verbose:
-            print("Warning: No xr_ds_path provided, dataset will not be saved.")
-    else:
-        if verbose:
-            print(f"Dataset will be saved to {xr_ds_path}")
-
-
-    # Gather metadata: samples
-    all_samples = get_all_samples(site_ds, extra_samples=extra_samples)
+        print(f"xarray Dataset dimensions: {xr_ds.dims}") 
 
     # Get REF dataset
-    if "REF" in all_samples:
+    if "REF" in extra_samples:
         ds_ref, site_ds_ref = GVL.get_reference_dataset(site_ds, verbose=verbose)
-        if ds_ref is None:
-            all_samples = [s for s in all_samples if s != "REF"] 
-
-    # Get batches
-    batches = utils.split_batches(n_samples=len(all_samples), 
-                                  max_seqs_per_batch=max_seqs_per_batch) 
     
     # Gather metadata: ploidy
     all_ploid = xr_ds.coords["ploid"].values.tolist()
     if all_models is None:
         all_models = list(xr_ds.data_vars.keys())
     if run_models is None:
-        run_models = all_models
+        run_models = all_models  
+
+    # Get the device
+    if device is None:
+        device = utils.get_device() 
 
     # Iterate over models
     for model_name in tqdm(run_models, 
                            desc="Iterating over models",
                            disable=verbose<0,
-                           leave=False):
+                           leave=False): 
         
+        # Get the model slots
+        model_slots = get_model_to_metric_map(model_name=model_name) 
+
+        # Get the batch size
+        if max_seqs_per_batch is None:  
+            model_max_seqs_per_batch = get_model_to_batchsize_map(model_name=model_name) 
+        else:
+            model_max_seqs_per_batch = max_seqs_per_batch
+
+        if xarray_subset_notnull(xr_ds=xr_ds, 
+                                 model_name=model_name, 
+                                 query=dict(slot=model_slots), 
+                                 method="all") and not force:
+            if verbose:
+                print(f"Skipping {model_name}, because it it already filled with values")
+                print(f"To force rerun, set force=True")
+            continue
+
+         
         # Load the model
         model_name = model_name.lower()
-        model = load_model(model_name) 
-
-        # Init the model
-        if device is None:
-            device = utils.get_device()
-        device_str = utils.device_to_str(device)
-        if device_str=="GPU":
-            model.to(device_str)
-            model.eval()
+        model = load_model(model_name, device=device, eval=True)  
         
         # Load the tokenizer
         tokenizer = load_tokenizer(model_name)
+
+
 
         # Iterate over sites
         # NOTE:
@@ -178,17 +292,29 @@ def vep_pipeline(site_ds,
                             desc="Iterating over sites",
                             disable=verbose<0,
                             leave=False):
-            
+        
             # Get site metadata
             site = site_ds.rows[row_idx]
             site_idx = site['site_idx'][0]
             site_name = site["name"][0] 
 
-            # Import all the haplotypes for the region at once to reduce overhead
-            wt_haps, mut_haps, flags = site_ds[row_idx, :]
-            # Import the sequences for the REF sample
-            ## All samples are REF, just use the first one
-            wt_haps_ref, mut_haps_ref, flags_ref = site_ds_ref[row_idx, 0] 
+            # Check if the site is already filled with values for all samples
+            if force:
+                # Get all samples
+                samples_incomplete = xr_ds.sel(site=site_name)[[model_name]].get("sample").values
+            else:
+                # Get the samples that are not complete
+                xr_null = find_null_xarray(xr_ds.sel(site=site_name)[[model_name]])
+                samples_incomplete = xr_null.get("sample").values
+                if len(samples_incomplete)==0 and not force:
+                    if verbose>1:
+                        print(f"Skipping {model_name}, {site_name}, because all samples are already filled with values")
+                        print(f"To force rerun, set force=True")
+                    continue
+
+            # Get batches
+            batched_samples = utils.split_batches(samples=samples_incomplete, 
+                                                  max_seqs_per_batch=model_max_seqs_per_batch)  
 
             # --- Limit the number of sites for testing --- #
             if limit_sites is not None and site_idx>limit_sites:
@@ -198,125 +324,144 @@ def vep_pipeline(site_ds,
             if site_idx == 0:
                 continue
 
+            # Keep track of the number of samples processed
+            sample_count = 0
+
             # Iterate over each sample
-            for sample_idx, sample_name in tqdm(enumerate(all_samples),
-                                                total=len(all_samples),
-                                                desc="Iterating over samples",
-                                                disable=verbose<1,
-                                                leave=False):
-
-                # --- Limit the number of samples for testing --- #
-                if limit_samples is not None and sample_idx>limit_samples:
-                    break 
+            for batch_idx, sample_names in tqdm(enumerate(batched_samples),
+                                              total=len(batched_samples),
+                                              desc=f"Iterating over sample batches ({len(samples_incomplete)} samples total)",
+                                              disable=verbose<1,
+                                              leave=False):  
                 
-                # Iterate over ploidy
-                for ploid_idx, ploid_name in enumerate(all_ploid):
+                sample_count += len(sample_names)
+                # --- Limit the number of samples for testing --- #
+                if limit_samples is not None and sample_count>limit_samples:
+                    break 
 
-                    start_time = time.time()
-
-                    # Skip if the value is already set
-                    current_value = xr_ds[model_name].sel(site=site_name,
-                                                            sample=sample_name, 
-                                                            ploid=ploid_name, 
-                                                            #    slot="VEP"
-                                                            )
-                    if current_value.notnull().any() and not force:
-                        if verbose>1:
-                            print(f"Skipping {model_name}, {site_name}, {sample_name}, {ploid_name} because it already has a value")
-                        continue  
-                    
-                    # Determine whether to return the sequences as a string/list (True) or a bytearray (False)
-                    seq_as_str = True
-                    
-                    # Extract and convert sequences
-                    if sample_name == "REF" and site_ds_ref is not None: 
-                        
-                        # Skip the second ploid because the REF genome is haploid
-                        if ploid_idx == 1:
-                            continue
-
-                        ## Get the wildtype (wt) sequence
-                        seq_wt = GVL.haps_to_seqs(haps=wt_haps_ref, 
-                                                  sample_idx=sample_idx,
-                                                  ploid_idx=ploid_idx, 
-                                                  as_str=seq_as_str)
-                        ## Get the mutated (mut) sequence
-                        seq_mut = GVL.haps_to_seqs(haps=mut_haps_ref, 
-                                                   sample_idx=sample_idx,
-                                                   ploid_idx=ploid_idx, 
-                                                   as_str=seq_as_str)        
-
-                    elif sample_name == "consensus":
-                        # consensus_seq = GVL.get_consensus_sequence(site_ds=site_ds, 
-                        #                                            region_idx=row_idx,
-                        #                                            as_str=True, 
-                        #                                            verbose=verbose>1)
-                        continue # TODO: figure out how to inject site-only variants into the consensus sequence
-
-                    else:
-                        ## Get the wildtype (wt) sequence
-                        seq_wt = GVL.haps_to_seqs(haps=wt_haps, 
-                                                  sample_idx=sample_idx,
-                                                  ploid_idx=ploid_idx, 
-                                                  as_str=seq_as_str)
-                        ## Get the mutated (mut) sequence
-                        seq_mut = GVL.haps_to_seqs(haps=mut_haps, 
-                                                   sample_idx=sample_idx,
-                                                   ploid_idx=ploid_idx, 
-                                                   as_str=seq_as_str)           
-                    # Run the model
+                # Check if the subset is null
+                if verbose>1:
+                    print(f"Checking if the subset is null: {model_name}, {site_name}, {len(sample_names)} samples")
+                if xarray_subset_notnull(xr_ds=xr_ds, 
+                                         model_name=model_name, 
+                                         query=dict(site=site_name,
+                                                   sample=sample_names, 
+                                                   ploid=all_ploid, 
+                                                   slot=model_slots), 
+                                         method="all") and not force:
                     if verbose>1:
-                        print(f"Running VEP: {model_name}, {site_name}, {sample_name}, {ploid_idx}")
-                    
-                    # Run the VEP
-                    run_vep_start_time = time.time()
-                    vep = run_vep(model_name=model_name,
-                                    model=model,
-                                    tokenizer=tokenizer,
-                                    seq_wt=seq_wt, 
-                                    seq_mut=seq_mut,
-                                    verbose=verbose>1)
-                    run_vep_end_time = time.time()
-                    # Store only the relevant VEP results
-                    for k,v in vep.items():
-                        # Only assign valid slot types
-                        if k in xr_ds[model_name].coords['slot'].values:        
-                            xr_ds[model_name].loc[
-                                dict( 
-                                    # cohort=cohort,
-                                    # chrom=chrom,
-                                    # sites_set=sites_set,
-                                    site=site_name,
-                                    sample=sample_name, 
-                                    ploid=ploid_name, 
-                                    slot=k)
-                                    ] = utils.as_numpy(v) 
-                            
-                    # Get the extra slots data
-                    extra_slots = {"time_total":time.time()-start_time,
-                                   "time_run_vep":run_vep_end_time-run_vep_start_time,
-                                #    "timestamp":time.strftime("%Y-%m-%d %H:%M:%S"),
-                                   "output_length":site_ds.dataset.output_length,
-                                   "len_seq_wt":len(seq_wt),
-                                   "len_seq_mut":len(seq_mut)}
-                    
-                    # Add the extra slots to the dataset
-                    for k,v in extra_slots.items():
-                        if v is not None:
-                            xr_ds[model_name].loc[
-                                dict(site=site_name,
-                                     sample=sample_name, 
-                                     ploid=ploid_name, 
-                                     slot=k)
-                                ] = v
+                        print(f"Skipping ({model_name}, {site_name}, {len(sample_names)} samples) because it is already filled with values")
+                    continue
 
-                    # Save after each ploid is complete
-                    if checkpoint_frequency=="ploid":
-                        update_xarray_dataset(ds=xr_ds, 
-                                              xr_ds_path=xr_ds_path,
-                                              verbose=verbose>1) 
+                start_time = time.time() 
+                
+                # Determine whether to return the sequences as a string/list (True) or a bytearray (False)
+                seq_as_str = False 
+
+                if verbose>1:
+                    print(f"Importing haplotypes")
+
+                sample_names_nonextra = [s for s in sample_names if s not in extra_samples]
+                # Import all the haplotypes for region/batch
+                haps_wt, haps_mut, flags = site_ds[row_idx, sample_names_nonextra] 
+
+                if verbose>1:
+                    print(f"Converting haplotypes to sequences")
+
+                ## Get the wildtype (wt) haplotype sequences
+                seq_wt = GVL.haps_to_seqs(haps=haps_wt,  
+                                           as_str=seq_as_str)
+                del haps_wt
+                
+                ## Get the mutated (mut) haplotype sequences
+                seq_mut = GVL.haps_to_seqs(haps=haps_mut,  
+                                           as_str=seq_as_str)    
+                del haps_mut
+                
+                # Add REF sample to sequences
+                if "REF" in sample_names and site_ds_ref is not None:  
+
+                    # Import the sequences for the REF sample
+                    ## All samples are REF, just use the first one
+                    haps_wt_ref, haps_mut_ref, flags_ref = site_ds_ref[row_idx, [0]]  
+
+                    ## Get the wildtype (wt) sequence and add to haplotype sequences
+                    seq_wt_ref = GVL.haps_to_seqs(haps=haps_wt_ref,  
+                                                  as_str=seq_as_str)
+                    seq_wt = np.concatenate([seq_wt,seq_wt_ref], axis=0)   
+                    del haps_wt_ref, seq_wt_ref
+
+                    ## Get the mutated (mut) sequence and add to haplotype sequences
+                    seq_mut_ref = GVL.haps_to_seqs(haps=haps_mut_ref,  
+                                                   as_str=seq_as_str)     
+                    seq_mut = np.concatenate([seq_mut,seq_mut_ref], axis=0)    
+                    del haps_mut_ref, seq_mut_ref
+
+                # elif "consensus" in sample_names:
+                #     # consensus_seq = GVL.get_consensus_sequence(site_ds=site_ds, 
+                #     #                                            region_idx=row_idx,
+                #     #                                            as_str=True, 
+                #     #                                            verbose=verbose>1)
+                #     continue # TODO: figure out how to inject site-only variants into the consensus sequence
+
+                # Run the model
+                if verbose>1:
+                    print(f"Running VEP: {model_name}, {site_name}, {len(sample_names)}")
+                
+                # Run the VEP
+                run_vep_start_time = time.time()
+                vep = run_vep(model_name=model_name,
+                              model=model,
+                              tokenizer=tokenizer,
+                              device=device,
+                              seq_wt=seq_wt, 
+                              seq_mut=seq_mut,
+                              verbose=verbose>1)
+                run_vep_end_time = time.time()
+
+                # Empty the cache
+                # del seq_wt, seq_mut
+                torch.cuda.empty_cache() 
+
+                if verbose>1:
+                    print(f"Storing VEP results")
+                # Store only the relevant VEP results
+                for k,v in vep.items():
+                    # Only assign valid slot types
+                    if k in xr_ds[model_name].coords['slot'].values:        
+                        xr_ds[model_name].loc[
+                            dict(  
+                                site=site_name,
+                                sample=sample_names, 
+                                ploid=all_ploid, 
+                                slot=k)
+                                ] = utils.as_numpy(v.reshape(len(sample_names), 
+                                                             len(all_ploid))) 
+                        
+                
+                # Get the extra slots data
+                if verbose>1:
+                    print(f"Adding extra slots")
+                # Get the time per sequence: time / batch size / ploid / (MUT + WT)
+                extra_slots = {"time_total":(time.time()-start_time)/len(sample_names)/len(all_ploid)/2,
+                                "time_run_vep":(run_vep_end_time-run_vep_start_time)/len(sample_names)/len(all_ploid)/2,
+                            #    "timestamp":time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "output_length":site_ds.dataset.output_length,
+                                "len_seq_wt":seq_wt.shape[-1],
+                                "len_seq_mut":seq_mut.shape[-1]}
+                
+                # Add the extra slots to the dataset
+                for k,v in extra_slots.items():
+                    if v is not None:
+                        xr_ds[model_name].loc[
+                            dict(site=site_name,
+                                 sample=sample_names, 
+                                 ploid=all_ploid, 
+                                 slot=k)
+                            ] = v
+ 
                 # Save after each sample is complete
-                if checkpoint_frequency=="sample":
+                if checkpoint_frequency=="batch":
                     update_xarray_dataset(ds=xr_ds, 
                                           xr_ds_path=xr_ds_path,
                                           verbose=verbose>1)
@@ -330,6 +475,14 @@ def vep_pipeline(site_ds,
     return xr_ds
 
 
+def _get_extra_slots():
+    return ["time_total",
+            "time_run_vep",
+            "timestamp",
+            "output_length",
+            "len_seq_wt",
+            "len_seq_mut"]
+
 def init_or_load_xarray_dataset(xr_ds_path,  
                                 site_ds,
                                 all_models=None, 
@@ -340,16 +493,11 @@ def init_or_load_xarray_dataset(xr_ds_path,
                                 all_samples=None,
                                 all_ploid=None,
                                 all_slots=None,
-                                extra_slots=["time_total",
-                                             "time_run_vep",
-                                             "timestamp",
-                                             "output_length",
-                                             "len_seq_wt",
-                                             "len_seq_mut"
-                                             ],
+                                extra_slots=None,
                                 extra_samples=["REF","consensus"],
                                 force=False,
                                 mode="w",
+                                verbose=True,
                                 **kwargs):
     """
     Initialize a new xarray dataset or load an existing one.
@@ -370,7 +518,8 @@ def init_or_load_xarray_dataset(xr_ds_path,
             "a-" means only append those variables that have append_dim. 
             "r+" means modify existing array values only (raise an error if any metadata or shapes would change). 
             The default mode is "a" if append_dim is set. Otherwise, it is "r+" if region is set and w- otherwise.
-        
+        verbose (bool): Whether to print verbose output
+
     Returns:
         xarray.Dataset: The initialized or loaded Dataset
     """
@@ -385,6 +534,8 @@ def init_or_load_xarray_dataset(xr_ds_path,
     
     if all_models is None:
         all_models = list(get_model_to_metric_map().keys())
+    if extra_slots is None:
+        extra_slots = _get_extra_slots()
 
     # if all_cohorts is None:
     #     all_cohorts = ["1000_Genomes_30x_on_GRCh38",
@@ -399,7 +550,9 @@ def init_or_load_xarray_dataset(xr_ds_path,
     if all_sites is None:
         all_sites = site_ds.rows["name"].unique().to_list()# Skip the first row (WT)
     if all_samples is None:
-        all_samples = get_all_samples(site_ds, extra_samples=extra_samples)
+        all_samples = get_all_samples(site_ds) 
+        if extra_samples is not None:
+            all_samples = extra_samples + all_samples
     if all_ploid is None:
         all_ploid = ["0","1"] # Humans are diploid, so they have two haplotypes
         
@@ -420,9 +573,11 @@ def init_or_load_xarray_dataset(xr_ds_path,
             print(f"Loading existing results from {xr_ds_path}")
             return xr.open_dataset(xr_ds_path, concat_characters=True)
     
-        print(f"Initializing new Dataset at {xr_ds_path}")
+        if verbose:
+            print(f"Initializing new Dataset at {xr_ds_path}")
     else:
-        print("No zarr path provided, initializing empty Dataset")
+        if verbose:
+            print("No zarr path provided, initializing empty Dataset")
         
     # Initialize the data arrays
     data_vars = {}
@@ -431,7 +586,7 @@ def init_or_load_xarray_dataset(xr_ds_path,
                            leave=False):
         
         # Get the slots for the model
-        all_slots = get_model_to_metric_map()[model_name] + extra_slots
+        all_slots = get_model_to_metric_map(model_name=model_name) + extra_slots
         
         # Create a numpy array with dimensions [sites, samples, ploidy, slots]
         data_array = np.empty((
@@ -510,6 +665,7 @@ def run_vep(model_name,
             seq_mut,
             model=None, 
             tokenizer=None, 
+            device=None,
             verbose=True,
             **kwargs):
     """
@@ -521,6 +677,7 @@ def run_vep(model_name,
                         tokenizer=tokenizer, 
                         seq_wt=seq_wt, 
                         seq_mut=seq_mut,
+                        device=device,
                         verbose=verbose,
                         **kwargs)
     
@@ -529,7 +686,8 @@ def run_vep(model_name,
         return _run_vep(model=model, 
                         tokenizer=tokenizer, 
                         seq_wt=seq_wt, 
-                        seq_mut=seq_mut,
+                        seq_mut=seq_mut,    
+                        device=device,
                         verbose=verbose,
                         **kwargs)
     
@@ -539,6 +697,7 @@ def run_vep(model_name,
                         tokenizer=tokenizer, 
                         seq_wt=seq_wt, 
                         seq_mut=seq_mut,
+                        device=device,
                         verbose=verbose,
                         **kwargs)
     
@@ -548,6 +707,7 @@ def run_vep(model_name,
                         tokenizer=tokenizer, 
                         seq_wt=seq_wt, 
                         seq_mut=seq_mut,
+                        device=device,
                         verbose=verbose,
                         **kwargs)
     
@@ -557,35 +717,39 @@ def run_vep(model_name,
                         tokenizer=tokenizer, 
                         seq_wt=seq_wt, 
                         seq_mut=seq_mut,
+                        device=device,
                         verbose=verbose,
                         **kwargs)
     
     else:
         raise ValueError(f"Model {model_name} not found")
 
-def load_model(model_name):
+def load_model(model_name,
+                device=None,
+                eval=False,
+                **kwargs):
     """
     Load the model for a given model name.
     """
     if model_name == "spliceai":
         from src.spliceai import load_model as _load_model
-        return _load_model()
+        return _load_model(device=device, eval=eval, **kwargs)
 
     elif model_name == "spliceai_mm":
         from src.spliceai_multimolecule import load_model as _load_model
-        return _load_model()
+        return _load_model(device=device, eval=eval, **kwargs)
         
     elif model_name == "flashzoi":
         from src.flashzoi import load_model as _load_model 
-        return _load_model()
+        return _load_model(device=device, eval=eval, **kwargs)
     
     elif model_name.startswith("evo2"):
         from src.evo2 import load_model as _load_model
-        return _load_model() 
+        return _load_model(device=device, eval=eval, **kwargs) 
     
     elif model_name == "dnabert2":
         from src.dnabert2 import load_model as _load_model
-        return _load_model()
+        return _load_model(**kwargs)
     
 def load_tokenizer(model_name):
     """
@@ -612,19 +776,21 @@ def load_tokenizer(model_name):
         return _load_tokenizer() 
 
 def vep_pipeline_onekg(bed,
-                       run_models = None,
-                        all_models = None,
                         cohort = "1000_Genomes_on_GRCh38",
+                        variant_set = "clinvar_utr_snv",
+                        run_models = None,
+                        all_models = None,
+                        results_dir = None,
                         site_filters=None,
                         window_len = 2**18,
+                        max_seqs_per_batch=None,
                         limit_regions = None,
                         limit_chroms = None,
                         limit_samples = None,
                         limit_sites = None,
                         force_gvl = False,
                         force_vep = False,
-                        verbose = True,
-                        variant_set = "clinvar_utr_snv",
+                        verbose = True, 
                         checkpoint_frequency = "site"):
     """
     Run the VEP pipeline for the 1000 Genomes project.
@@ -634,8 +800,13 @@ def vep_pipeline_onekg(bed,
         run_models (list): A list of model names to run the VEP pipeline on.
         all_models (list): A list of model names to initialize the xarray dataset with.
         cohort (str): The cohort to run the VEP pipeline on.
+        results_dir (str): The directory to save the results to. 
+            If None, the results will be saved to the directory specified by the pattern:
+            {HOME}/projects/data/{cohort}/{variant_set}
         variant_set (str): The variant set to run the VEP pipeline on.
         window_len (int): The window length to run the VEP pipeline on.
+        max_seqs_per_batch (int): The maximum number of sequences to run the VEP pipeline in a single batch.
+            If None, the batch size will be determined by the model name according to get_model_to_batchsize_map().
         limit_regions (int): The maximum number of regions to run the VEP pipeline on.
         limit_chroms (int): The maximum number of chromosomes to run the VEP pipeline on.
         limit_samples (int): The maximum number of samples to run the VEP pipeline on.
@@ -680,8 +851,9 @@ def vep_pipeline_onekg(bed,
                       desc="Iterating over chromosomes"):
         
         # Create storage directory
-        results_dir = os.path.join(os.path.expanduser('~'), 
-                                "projects","data",cohort,variant_set)
+        if results_dir is None:
+            results_dir = os.path.join(os.path.expanduser('~'), 
+                                    "projects","data",cohort,variant_set)
         
         # Download VCF files
         vcf_paths = og.download_vcfs(key=cohort, 
@@ -733,6 +905,7 @@ def vep_pipeline_onekg(bed,
                              xr_ds_path=xr_ds_path,
                              run_models=run_models,
                              all_models=all_models,  
+                             max_seqs_per_batch=max_seqs_per_batch,
                              verbose=verbose,
                              force=force_vep,
                              limit_samples=limit_samples,
@@ -771,16 +944,17 @@ def load_vep_results(xr_ds_path,
             df = df.dropna(subset=dropna_subset)
         
         if verbose:
-            print("After filtering:")
+            print("Contents of xarray after filtering [filled values / total values]:")
             print(" - rows:",df.shape[0])
-            print(" - sites:",df["site"].nunique())
-            print(" - samples:",df["sample"].nunique())
+            print(" - sites:",df["site"].nunique(),"/",xr_ds.coords["site"].shape[0])
+            print(" - samples:",df["sample"].nunique(),"/",xr_ds.coords["sample"].shape[0])
+            print(" - ploid:",df["ploid"].nunique(),"/",xr_ds.coords["ploid"].shape[0])
+            print(" - slots:",df["slot"].nunique(),"/",xr_ds.coords["slot"].shape[0])
         return df
     return xr_ds
 
 
-def get_all_samples(site_ds, 
-                    extra_samples=["REF","consensus"]):
+def get_all_samples(site_ds):
     """
     Get all samples from a site_ds.
 
@@ -792,9 +966,6 @@ def get_all_samples(site_ds,
         list: A list of all samples.
     """
     all_samples = site_ds.dataset.samples
-    if extra_samples is not None:
-        # Must be added AFTER the default samples, or else the sample_idx will be wrong
-        all_samples =  all_samples + extra_samples
     return all_samples
 
 def get_all_sites(site_ds):

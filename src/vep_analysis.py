@@ -44,3 +44,16 @@ def summarise_title(vep_df,
         else:
             labels[col] = f"{col}: {vep_df[col].tolist()[0]}"
     return ', '.join([labels[col] for col in label_cols if col in labels])
+
+
+def estimate_runtime(vep_df,
+                     total_sites,
+                     model_name = "flashzoi",
+                     time_col = "time_total",
+                     n_gpus = 1):
+    
+
+    time_df =  vep_df.loc[vep_df["slot"]==time_col]
+    seconds_per_site = time_df.groupby("site")[model_name].sum().mean()
+    print(f"{seconds_per_site/60:.2f} minutes per site")
+    print(f"Number of days it should take to run all {total_sites} sites genome-wide:\n{seconds_per_site * total_sites / 60 / 60 / 24 / n_gpus:.2f}")

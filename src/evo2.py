@@ -8,11 +8,18 @@ from typing import Optional
 
 DEFAULT_MODEL_NAME = "evo2_7b_base"
 
-def load_model(model_name: str = DEFAULT_MODEL_NAME):
+def load_model(model_name: str = DEFAULT_MODEL_NAME,
+               device=None,
+               eval=False,
+               **kwargs):
     """
     Load the Evo2 model.
     """
     model = Evo2(model_name)
+    if device is not None:
+        model.to(device)
+    if eval:
+        model.eval()
     return model
 
 def load_tokenizer(model_name: str = DEFAULT_MODEL_NAME, 

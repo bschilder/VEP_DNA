@@ -360,7 +360,7 @@ def as_tf_tensor(x):
     if isinstance(x, np.ndarray):
         return tf.convert_to_tensor(x)
     
-def as_numpy(x):
+def as_numpy(x, to_cpu=True):
     """
     Convert a torch.Tensor to a numpy.ndarray.
     """
@@ -370,7 +370,7 @@ def as_numpy(x):
     
     import torch
     if isinstance(x, torch.Tensor):
-        return x.cpu().numpy()
+        return x.cpu().numpy() if to_cpu else x.numpy()
     
     import importlib.util
     if importlib.util.find_spec("tensorflow") is not None:
@@ -452,10 +452,30 @@ def random_seqs(N,
         seqs = [seq.tobytes().decode() for seq in seqs]
     return seqs
 
-def split_batches(n_samples, 
+def split_batches(samples, 
                 max_seqs_per_batch=25, 
                 ploid=2,
-                mutants=None):
+                mutants=None, 
+                return_names=True):
+    """
+    Split a list of samples into batches.
+
+    Args:
+        samples: List of samples
+        max_seqs_per_batch: Maximum number of sequences per batch
+        ploid: Ploidy of the samples
+        mutants: Number of mutants per sample
+        return_names: If True, return the names of the samples in the batches. If False, return the indices of the samples in the batches.
+
+    Returns:
+        List of batches
+
+    Example:
+        >>> samples = ['sample1', 'sample2', 'sample3', 'sample4', 'sample5']
+        >>> split_batches(samples, max_seqs_per_batch=2, ploid=2, mutants=1, return_names=True)
+    """
+    
+    n_samples = len(samples)
     # Divide by 2 to account for both haplotypes
     batch_size = max_seqs_per_batch // ploid 
 
@@ -466,5 +486,8 @@ def split_batches(n_samples,
     # Ceiling division
     n_batches = (n_samples + batch_size - 1) // batch_size  
 
-    batches = [slice(batch_idx*batch_size, (batch_idx+1)*batch_size) for batch_idx in range(n_batches)]
+    if return_names:
+        batches = [samples[slice(batch_idx*batch_size, (batch_idx+1)*batch_size)] for batch_idx in range(n_batches)]
+    else:
+        batches = [slice(batch_idx*batch_size, (batch_idx+1)*batch_size) for batch_idx in range(n_batches)]
     return batches

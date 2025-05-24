@@ -1,0 +1,607 @@
+{
+  "attributes": {},
+  "zarr_format": 3,
+  "consolidated_metadata": {
+    "kind": "inline",
+    "must_understand": false,
+    "metadata": {
+      "site": {
+        "shape": [
+          20
+        ],
+        "data_type": "string",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              20
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": "",
+        "codecs": [
+          {
+            "name": "vlen-utf8",
+            "configuration": {}
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {},
+        "dimension_names": [
+          "site"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "flashzoi": {
+        "shape": [
+          20,
+          452,
+          2,
+          14
+        ],
+        "data_type": "float64",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              10,
+              226,
+              1,
+              14
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": 0.0,
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {
+          "_FillValue": "AAAAAAAA+H8="
+        },
+        "dimension_names": [
+          "site",
+          "sample",
+          "ploid",
+          "slot"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "evo2_40b": {
+        "shape": [
+          20,
+          452,
+          2,
+          14
+        ],
+        "data_type": "float64",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              10,
+              226,
+              1,
+              14
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": 0.0,
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {
+          "_FillValue": "AAAAAAAA+H8="
+        },
+        "dimension_names": [
+          "site",
+          "sample",
+          "ploid",
+          "slot"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "sample": {
+        "shape": [
+          452
+        ],
+        "data_type": "string",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              452
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": "",
+        "codecs": [
+          {
+            "name": "vlen-utf8",
+            "configuration": {}
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {},
+        "dimension_names": [
+          "sample"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "spliceai_mm": {
+        "shape": [
+          20,
+          452,
+          2,
+          14
+        ],
+        "data_type": "float64",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              10,
+              226,
+              1,
+              14
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": 0.0,
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {
+          "_FillValue": "AAAAAAAA+H8="
+        },
+        "dimension_names": [
+          "site",
+          "sample",
+          "ploid",
+          "slot"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "evo2_7b": {
+        "shape": [
+          20,
+          452,
+          2,
+          14
+        ],
+        "data_type": "float64",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              10,
+              226,
+              1,
+              14
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": 0.0,
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {
+          "_FillValue": "AAAAAAAA+H8="
+        },
+        "dimension_names": [
+          "site",
+          "sample",
+          "ploid",
+          "slot"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "slot": {
+        "shape": [
+          14
+        ],
+        "data_type": "string",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              14
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": "",
+        "codecs": [
+          {
+            "name": "vlen-utf8",
+            "configuration": {}
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {},
+        "dimension_names": [
+          "slot"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "evo2_7b_base": {
+        "shape": [
+          20,
+          452,
+          2,
+          14
+        ],
+        "data_type": "float64",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              10,
+              226,
+              1,
+              14
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": 0.0,
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {
+          "_FillValue": "AAAAAAAA+H8="
+        },
+        "dimension_names": [
+          "site",
+          "sample",
+          "ploid",
+          "slot"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "evo2_40b_base": {
+        "shape": [
+          20,
+          452,
+          2,
+          14
+        ],
+        "data_type": "float64",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              10,
+              226,
+              1,
+              14
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": 0.0,
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {
+          "_FillValue": "AAAAAAAA+H8="
+        },
+        "dimension_names": [
+          "site",
+          "sample",
+          "ploid",
+          "slot"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "ploid": {
+        "shape": [
+          2
+        ],
+        "data_type": "string",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              2
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": "",
+        "codecs": [
+          {
+            "name": "vlen-utf8",
+            "configuration": {}
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {},
+        "dimension_names": [
+          "ploid"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "dnabert2": {
+        "shape": [
+          20,
+          452,
+          2,
+          14
+        ],
+        "data_type": "float64",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              10,
+              226,
+              1,
+              14
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": 0.0,
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {
+          "_FillValue": "AAAAAAAA+H8="
+        },
+        "dimension_names": [
+          "site",
+          "sample",
+          "ploid",
+          "slot"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      },
+      "spliceai": {
+        "shape": [
+          20,
+          452,
+          2,
+          14
+        ],
+        "data_type": "float64",
+        "chunk_grid": {
+          "name": "regular",
+          "configuration": {
+            "chunk_shape": [
+              10,
+              226,
+              1,
+              14
+            ]
+          }
+        },
+        "chunk_key_encoding": {
+          "name": "default",
+          "configuration": {
+            "separator": "/"
+          }
+        },
+        "fill_value": 0.0,
+        "codecs": [
+          {
+            "name": "bytes",
+            "configuration": {
+              "endian": "little"
+            }
+          },
+          {
+            "name": "zstd",
+            "configuration": {
+              "level": 0,
+              "checksum": false
+            }
+          }
+        ],
+        "attributes": {
+          "_FillValue": "AAAAAAAA+H8="
+        },
+        "dimension_names": [
+          "site",
+          "sample",
+          "ploid",
+          "slot"
+        ],
+        "zarr_format": 3,
+        "node_type": "array",
+        "storage_transformers": []
+      }
+    }
+  },
+  "node_type": "group"
+}

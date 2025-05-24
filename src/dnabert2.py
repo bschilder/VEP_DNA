@@ -10,8 +10,16 @@ DEFAULT_MODEL_NAME = "zhihan1996/DNABERT-2-117M"
 def load_tokenizer(model_name: str = DEFAULT_MODEL_NAME):
     return AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
-def load_model(model_name: str = DEFAULT_MODEL_NAME):
-    return AutoModel.from_pretrained(model_name, trust_remote_code=True)
+def load_model(model_name: str = DEFAULT_MODEL_NAME,
+               device=None,
+               eval=False,
+               **kwargs):
+    model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
+    if device is not None:
+        model.to(device)
+    if eval:
+        model.eval()
+    return model
 
 def get_embedding_mean(embedding, dim=0):
     """
