@@ -325,6 +325,8 @@ def get_mutated_sequence(seq,
     Returns:
         Mutated sequence
     """
+    if not isinstance(seq, str):
+        raise ValueError(f"Invalid sequence: {seq}. Must be a string.")
     seq2 = list(seq)
     if mutations<1 and mutations>0:
         print(f"Mutating {mutations*100}% of sequence")

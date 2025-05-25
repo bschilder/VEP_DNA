@@ -51,6 +51,7 @@ def get_model_to_metric_map(model_name=None):
                      "delta_abs_mean",
                      "delta_pow2_mean",
                      "delta_max_max",
+                     "COVR",
                     #  "pca_css_mean"
                      ],
         "evo2_7b": ["VEP"],

@@ -99,11 +99,11 @@ def dict_to_numpy(results,
     return results
     
 
-def compute_delta_metrics(trks_wt, trks_mut,
+def compute_vep_metrics(trks_wt, trks_mut,
                           as_numpy: bool = False,
                           verbose: bool = False):
     """
-    Compute delta metrics between the WT and MUT tracks.
+    Compute VEP metrics between the WT and MUT tracks.
     If the results are batched, compute metrics seaprately for each sample (first dimension)
     If the results are unbatched, compute metrics for the entire batch
 
@@ -131,6 +131,7 @@ def compute_delta_metrics(trks_wt, trks_mut,
         results["delta_abs_mean"] = results["delta"].abs().mean()
         results["delta_pow2_mean"] = results["delta"].pow(2).mean()
         results["delta_max_max"] = results["delta"].max().max()
+        results["COVR"] = ( (trks_mut + 1e-6) / (trks_wt + 1e-6) ).log2().abs().max()
     
     # For batched results, compute metrics seaprately for each sample (first dimension)
     # Each key stores a tensor of length n_samples
@@ -141,6 +142,7 @@ def compute_delta_metrics(trks_wt, trks_mut,
         results["delta_abs_mean"] = results["delta"].abs().mean(dim=-1).mean(dim=-1)
         results["delta_pow2_mean"] = results["delta"].pow(2).mean(dim=-1).mean(dim=-1)
         results["delta_max_max"] = results["delta"].max(dim=-1)[0].max(dim=-1)[0]
+        results["COVR"] = ( (trks_mut + 1e-6) / (trks_wt + 1e-6) ).log2().abs().max(dim=-1)[0].max(dim=-1)[0]
 
     # Convert tensors to numpy arrays and transfer from GPU --> CPU
     results = dict_to_numpy(results, as_numpy=as_numpy)
@@ -253,9 +255,9 @@ def run_vep(seq_wt,
                                 device=device)    
                                 
     # Compute delta metrics
-    results = compute_delta_metrics(trks_wt=trks_wt, 
-                                    trks_mut=trks_mut, 
-                                    verbose=verbose)
+    results = compute_vep_metrics(trks_wt=trks_wt, 
+                                  trks_mut=trks_mut, 
+                                  verbose=verbose)
     
     # Compute PCA metrics
     if run_pca:
