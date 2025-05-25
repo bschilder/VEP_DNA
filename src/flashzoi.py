@@ -68,8 +68,6 @@ def score_all_tracks(seq: str,
     # Convert numpy array to torch tensor add batch dimension
     x = tokenizer(seq).to(device) 
     
-    # model.to(device)
-    
     # Run the model
     with torch.no_grad(), autocast("cuda", torch.float16):
         # Input shape: (batch_size, one_hot, L)

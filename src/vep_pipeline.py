@@ -13,9 +13,13 @@ import src.genvarloader as GVL
 import genvarloader as gvl
 
 def get_model_to_batchsize_map(model_name=None,
-                               default=40):
+                               default=30):
     """
     Get a map of model names to their corresponding batch sizes.
+
+    Setting this value too high might errors related to:
+    - "CUDA out of memory"
+    - "RuntimeError: integer out of range
     """
     bsmap = {
         "spliceai": default,
@@ -51,7 +55,7 @@ def get_model_to_metric_map(model_name=None):
                      "delta_abs_mean",
                      "delta_pow2_mean",
                      "delta_max_max",
-                     "COVR",
+                     "COVR"
                     #  "pca_css_mean"
                      ],
         "evo2_7b": ["VEP"],
@@ -255,8 +259,6 @@ def vep_pipeline(site_ds,
         
         # Load the tokenizer
         tokenizer = load_tokenizer(model_name)
-
-
 
         # Iterate over sites
         # NOTE:
