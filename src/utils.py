@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 from typing import Optional, Union
-
+from tqdm import tqdm
 
 def download_url(url, save_path): 
     import time
@@ -497,3 +497,91 @@ def split_batches(samples,
     else:
         batches = [slice(batch_idx*batch_size, (batch_idx+1)*batch_size) for batch_idx in range(n_batches)]
     return batches
+
+
+
+def pdf(x, bins=100, range=None, density=True, normalize=True):
+    hist, _ = np.histogram(x, bins=bins, range=range, density=density)
+    if normalize:
+        return hist / np.sum(hist)
+    else:
+        return hist
+
+
+def kl_divergence(p, q):
+    """Calculate KL divergence between two probability distributions"""
+    from scipy.stats import entropy 
+    # Add small epsilon to avoid log(0)
+    p = np.clip(p, 1e-10, 1)
+    q = np.clip(q, 1e-10, 1)
+    return entropy(p, q)
+
+def wasserstein_distance_permuted(p, 
+                                  q, 
+                                  n_permutations=1000, 
+                                  random_seed=None,
+                                  verbose=False):
+    """
+    Compute an empirical p-value for the Wasserstein distance between sample_p and sample_q
+    via a permutation test.
+    
+    Parameters
+    ----------
+    p : array-like, shape (n,)
+        Observations from distribution P.
+    q : array-like, shape (m,)
+        Observations from distribution Q.
+    n_permutations : int, default=1000
+        Number of permutations to estimate the null distribution.
+    random_seed : int or None
+        Seed for reproducibility.
+    verbose : bool, default=False
+        If True, print progress.
+    
+    Returns
+    -------
+    p_value : float
+        Empirical p-value for H0: both samples come from the same distribution.
+    d_obs : float
+        Observed Wasserstein distance.
+    null_dist : np.ndarray, shape (n_permutations,)
+        The sampled null distances.
+    """
+    from scipy.stats import wasserstein_distance as wd
+    from tqdm import tqdm
+    rng = np.random.default_rng(random_seed)
+    p = np.asarray(p)
+    q = np.asarray(q)
+    
+    n = len(p)
+    m = len(q)
+    
+    # 1. Compute the observed Wasserstein distance
+    d_obs = wd(p, q)
+    
+    # 2. Pool the data
+    pooled = np.concatenate([p, q])
+    
+    # 3. Permutation loop
+    null_dist = np.zeros(n_permutations)
+    for i in tqdm(range(n_permutations), desc="Running permutations", 
+                  disable=not verbose, 
+                  leave=False):
+        # Shuffle the pooled array and split in two
+        permuted = rng.permutation(pooled)
+        perm_p = permuted[:n]       # size n
+        perm_q = permuted[n:]       # size m
+        null_dist[i] = wd(perm_p, perm_q)
+    
+    # 4. Compute empirical p-value (one-sided: how many null distances >= d_obs)
+    # +1 in numerator/denominator to avoid zero p-values
+    count_ge = np.count_nonzero(null_dist >= d_obs)
+    p_value = (count_ge + 1) / (n_permutations + 1)
+    # In this implementation, p<0.05 means that the observed Wasserstein distance 
+    # between distributions P and Q is significantly larger than what would be 
+    # expected by chance if both samples came from the same distribution.
+    # Specifically, it means that less than 5% of the permuted distances were 
+    # greater than or equal to the observed distance, suggesting that the two 
+    # distributions are likely different.
+    
+    return p_value, d_obs, null_dist
