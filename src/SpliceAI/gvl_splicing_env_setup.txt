@@ -1,0 +1,26 @@
+# Create and activate GPU-enabled conda environment
+conda create --name gvl_splicing python=3.11.8
+conda activate gvl_splicing
+
+# Install core libraries
+pip install keras==3.6.0
+pip install 'tensorflow[and-cuda]==2.17.0'
+pip install pandas==2.2.3
+
+# Visualization and genomics utilities
+pip install matplotlib==3.9.2
+pip install seaborn==0.13.2
+pip install logomaker==0.8.7
+
+# (Optional) Set up Jupyter kernel
+pip install ipykernel
+python -m ipykernel install --user --name=gvl_splicing --display-name "Python (gvl_splicing)"
+
+# Install GVL
+conda install -c bioconda bcftools
+conda install -c conda-forge rust
+cd /grid/kinney/home/zhliu/vep_dna
+git clone https://github.com/jackdesmarais/VEP_splicing
+git clone https://github.com/jackdesmarais/GenVarLoader
+cd /grid/kinney/home/zhliu/vep_dna/GenVarLoader
+pip install -e .
