@@ -403,18 +403,12 @@ class SpliceHapDataset:
             t_get_var = time.time()
             print(f"Time to get variant data: {t_get_var - t_get_haps:.4f}s")
 
-        var_idx = np.where(var_ref_coords[hap_idx]==ref_index)
-        if len(var_idx[0])==0:
-            warnings.warn(f'No variant index found for {variant_idx=} {sample_idx=} {hap_idx=} despite flag being {flag}, forcing flag to 2')
-            flag = 2
-
-        if self.enable_profiling:
-            t_find_idx = time.time()
-            print(f"Time to find variant index: {t_find_idx - t_get_var:.4f}s")
-
         if flag==0 or flag==1: 
+            var_idx = np.where(var_ref_coords[hap_idx]==ref_index)[0][0]
 
-            var_idx = var_idx[0][0]
+            if self.enable_profiling:
+                t_find_idx = time.time()
+                print(f"Time to find variant index: {t_find_idx - t_get_var:.4f}s")
 
             var_allele = var_haps[hap_idx,var_idx-self.context_size-self.window_size:var_idx+self.context_size+self.window_size+1]
             ref_allele = wt_haps[hap_idx,var_idx-self.context_size-self.window_size:var_idx+self.context_size+self.window_size+1]
