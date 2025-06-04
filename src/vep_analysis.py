@@ -57,3 +57,20 @@ def estimate_runtime(vep_df,
     seconds_per_site = time_df.groupby("site")[model_name].sum().mean()
     print(f"{seconds_per_site/60:.2f} minutes per site")
     print(f"Number of days it should take to run all {total_sites} sites genome-wide:\n{seconds_per_site * total_sites / 60 / 60 / 24 / n_gpus:.2f}")
+
+
+def add_onekg_metadata(vep_df,
+                       sample_col = "sample",
+                       metadata_df = None,
+                       how = "left"):
+    
+    if metadata_df is None:
+        import src.onekg as og
+        metadata_df = og.get_sample_metadata()
+    vep_df = vep_df.merge(metadata_df,
+                           left_on=sample_col, 
+                          right_on="Individual ID", 
+                          how=how)
+    vep_df.loc[vep_df["sample"]=="REF", "Super Population"] = "REF"
+    vep_df.loc[vep_df["sample"]=="REF", "Population"] = "REF"
+    return vep_df

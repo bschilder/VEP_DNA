@@ -1,7 +1,16 @@
 import os
 import pooch
 import polars as pl
+import pandas as pd
 
+
+INFO_COLS_SELECT = [
+    "AF_ESP", "AF_EXAC", "AF_TGP", "ALLELEID", "CLNDISDB", "CLNDN",
+    "CLNHGVS", "CLNREVSTAT", "CLNSIG", "CLNVC", "CLNVCSO", "CLNSIGCONF",
+    "GENEINFO","MC", "ORIGIN", "RS",
+    "ONC", "ONCDN", "ONCDISDB", "ONCREVSTAT", "ONCCONF",
+    "SCI", "SCIDN", "SCIDISDB", "SCIREVSTAT"
+]
 
 def download_vcf(vcf_url = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz"):
     """
@@ -28,21 +37,21 @@ def download_vcf(vcf_url = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/
 
 
 def vcf_to_df(vcf_file=None,
-              contig=None):
+              filter=None,#lambda v: "UTR" in v.INFO.get("MC", ""),
+              contig=None,
+               info = INFO_COLS_SELECT,
+            ):
     from genoray import VCF
 
     if vcf_file is None:
         vcf_file = download_vcf()["vcf"]
 
+ 
     vcf = VCF(vcf_file, 
-            filter=lambda v: "UTR" in v.INFO.get("MC", ""))
+              filter=filter)
 
     # annotation keys to extract from the INFO field
-    info = [
-        "AF_ESP", "AF_EXAC", "AF_TGP", "ALLELEID", "CLNDISDB", "CLNDN",
-        "CLNHGVS", "CLNREVSTAT", "CLNSIG", "CLNVC", "CLNVCSO", "GENEINFO",
-        "MC", "ORIGIN", "RS"
-    ]
+   
     vcf_df = vcf.get_record_info(contig=contig,
                                 attrs=["CHROM", "POS", "REF", "ALT"], 
                                 info=info,
@@ -74,7 +83,8 @@ def vcf_to_df(vcf_file=None,
 
 
 def simplify_annotations(bed,
-                         maps=None):
+                         maps=None,
+                         verbose=True):
     """
     Simplify the annotations in the ClinVar DataFrame.
 
@@ -90,10 +100,13 @@ def simplify_annotations(bed,
                               "Likely_pathogenic":"likely_path",
                               ...
                               }]
+        verbose (bool): Whether to print the number of genes in the filtered DataFrame.
     Returns:
         pl.DataFrame: The simplified ClinVar DataFrame.
     """
     if maps is None:
+        if verbose:
+            print("Using default maps.")
         maps = [ 
                 {"input_col": "CLNSIG",
                 "output_col": "CLNSIG_simple",
@@ -124,10 +137,19 @@ def simplify_annotations(bed,
                     }},
         ]
 
+    was_pandas = False
+    if isinstance(bed, pd.DataFrame):
+        bed = pl.DataFrame(bed)
+        was_pandas = True
+    if verbose:
+        print("Simplifying annotations.")
     for map in maps:
         bed = bed.with_columns(pl.col(map["input_col"]).replace_strict(map["map"]).alias(map["output_col"]))
      
     bed = bed.with_columns(pl.col("GENEINFO").str.split(":").list.first().alias("GENE"))
+
+    if was_pandas:
+        bed = bed.to_pandas()
     return bed
 
 def add_variant_name(df,
@@ -202,8 +224,7 @@ def df_to_bed(vcf_df,
         "ALT",
         'MC_id',
         'MC_term',
-        "AF_ESP", "AF_EXAC", "AF_TGP", "ALLELEID", "CLNDISDB", "CLNDN",
-        "CLNHGVS", "CLNREVSTAT", "CLNSIG", "CLNVC", "CLNVCSO", "GENEINFO",
+        *INFO_COLS_SELECT,
         "CLNREVSTAT_score"
         
         # "MC", "ORIGIN", "RS"
@@ -243,8 +264,7 @@ def df_to_sites(vcf_df):
         "ALT",
         'MC_id',
         'MC_term',
-        "AF_ESP", "AF_EXAC", "AF_TGP", "ALLELEID", "CLNDISDB", "CLNDN",
-        "CLNHGVS", "CLNREVSTAT", "CLNSIG", "CLNVC", "CLNVCSO", "GENEINFO",
+        *INFO_COLS_SELECT,
         "CLNREVSTAT_score"
         # "MC", "ORIGIN", "RS"
     ]).filter(pl.col('CHROM').str.contains('^[0-9]+$|^X$|^Y$'))
@@ -280,11 +300,36 @@ def bed_to_sites(bed):
     ])
     return sites
 
+def _extract_id_cols(df,
+                     add_counts=True,
+                     verbose=True):
+    if verbose:
+        print("Extracting ID columns.")
+    df = df.with_columns(
+        pl.col("CLNDISDB").str.extract_all(r'(MONDO:[^,|]+)').alias("MONDO"),
+        pl.col("CLNDISDB").str.extract_all(r'(OMIM:[^,|]+)').alias("OMIM"),
+        pl.col("CLNDISDB").str.extract_all(r'(Orphanet:[^,|]+)').alias("Orphanet"), 
+        pl.col("CLNDISDB").str.extract_all(r'(MedGen:[^,|]+)').alias("MedGen"),
+        pl.col("CLNDISDB").str.extract_all(r'(MeSH:[^,|]+)').alias("MeSH"),
+    )
+    if add_counts:
+        if verbose:
+            print("Adding ID counts.")
+        df = df.with_columns(
+            pl.col("MONDO").list.len().alias("MONDO_n"),
+            pl.col("OMIM").list.len().alias("OMIM_n"),
+            pl.col("Orphanet").list.len().alias("Orphanet_n"),
+            pl.col("MedGen").list.len().alias("MedGen_n"),
+            pl.col("MeSH").list.len().alias("MeSH_n"),
+        )
+    return df
+
 
 def read_bed(path, 
              schema_overrides=None,
              separator='\t',
              simplify=True,
+             extract_ids=True,
              **kwargs):
     """
     Read a BED file created by the clinvar submodule for use with GenVarloader.
@@ -294,6 +339,7 @@ def read_bed(path,
         schema_overrides (dict): A dictionary of column names and their data types.
         separator (str): The separator used in the BED file.
         simplify (bool): Whether to simplify the annotations.
+        extract_ids (bool): Whether to extract the ID columns.
         **kwargs: Additional arguments to pass to the pl.read_csv function.
 
     Returns:
@@ -318,6 +364,9 @@ def read_bed(path,
         separator=separator,
         **kwargs
     ).drop_nulls(subset=['ALT'])
+
+    if extract_ids:
+        bed = _extract_id_cols(bed)
 
     if simplify:
         bed = simplify_annotations(bed)

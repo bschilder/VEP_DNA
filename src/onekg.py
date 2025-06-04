@@ -321,7 +321,8 @@ def get_sample_metadata(key=DEFAULT_KEY,
     return sample_metadata
 
 def get_annotation_vcf(chrom,
-                       base_url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/"):
+                       base_url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/",
+                       **kwargs):
     """
     Retrieve a variant annotation VCF file for a specific chromosome.
     
@@ -332,16 +333,28 @@ def get_annotation_vcf(chrom,
     base_url : str, optional
         Base URL for the annotation VCF files.
         Default points to the 1000 Genomes Project functional annotation directory.
+    **kwargs : dict
+        Additional keyword arguments to pass to the VCF constructor.
         
     Returns:
     --------
-    pysam.VariantFile
-        A pysam VariantFile object for the requested chromosome annotation file.
+    genoray.VCF
+        A genoray VCF object for the requested chromosome annotation file.
     """
-    import pysam
+    from genoray import VCF
+    
     chrom = "chr"+str(chrom).replace("chr", "")
     url = f"{base_url}ALL.{chrom}.phase3_shapeit2_mvncall_integrated_v5.20130502.sites.annotation.vcf.gz"  
-    return pysam.VariantFile(url)
+
+    vcf_path = pooch.retrieve(url,
+                              fname=url.split("/")[-1],
+                              known_hash=None,
+                              progressbar=True)
+    index_path = pooch.retrieve(url+".tbi",
+                                fname=url.split("/")[-1]+".tbi",
+                                known_hash=None,
+                                progressbar=True)
+    return VCF(vcf_path, **kwargs)
 
 def query_annotation_vcf(vcf,
                          rec,
@@ -451,3 +464,14 @@ def _get_hgdp_manifest():
     return pd.DataFrame(data, columns=["fname", "datetime", "size"])
 
 
+def get_onekg_vcf_summary(key=DEFAULT_KEY, 
+                          per_individual=False):
+    
+    # per individual summary
+    if per_individual:
+        url = "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/functional_categories_summary_per_individual.20150208.txt"
+    # per superpopulation summary
+    else:
+        url = "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/functional_categories_summary_per_superpop.20150217.txt"
+    
+    return pd.read_csv(url, sep="\t")

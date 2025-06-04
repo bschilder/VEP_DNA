@@ -129,6 +129,10 @@ def get_clinsig_palette(values=['path', 'likely_path', 'likely_benign', 'benign'
     return _make_palette(values, palette) 
 
 
+
+def get_superpop_palette(values=['AFR', 'AMR', 'EAS', 'EUR', 'SAS'],
+                        palette='Set2'):
+    return _make_palette(values, palette)
 def save_json(obj,
               save_path,
               verbose=True,

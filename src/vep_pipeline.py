@@ -13,7 +13,7 @@ import src.genvarloader as GVL
 import genvarloader as gvl
 
 def get_model_to_batchsize_map(model_name=None,
-                               default=30):
+                               default=15):
     """
     Get a map of model names to their corresponding batch sizes.
 
@@ -785,7 +785,7 @@ def vep_pipeline_onekg(bed,
                         all_models = None,
                         results_dir = None,
                         site_filters=None,
-                        window_len = 2**18,
+                        window_len = 2**19,
                         max_seqs_per_batch=None,
                         limit_regions = None,
                         limit_chroms = None,
@@ -878,6 +878,7 @@ def vep_pipeline_onekg(bed,
         if not os.path.exists(ds_path) or force_gvl:
             gvl.write(
                 path=ds_path,
+                # window_len is the TOTAL window length (not just from each direction)
                 bed=gvl.with_length(bed_chrom[:limit_regions], window_len),
                 variants=variants,
                 overwrite=True,
@@ -956,6 +957,25 @@ def load_vep_results(xr_ds_path,
         return df
     return xr_ds
 
+def load_vep_results_mfdataset(xr_mfds_paths,
+                               concat_dim="sample",
+                               combine="nested",
+                               preprocess=lambda x: x.where(x.notnull()).sel(slot="COVR"),
+                               dropna_subset=None,
+                               **kwargs):
+    """
+    Load the VEP results from a directory of multiple zarr files.
+    """ 
+    mfds = xr.open_mfdataset(paths=xr_mfds_paths, 
+                            concat_dim=concat_dim,
+                            combine=combine,
+                            preprocess=preprocess,
+                            **kwargs
+                    ) 
+    mfds_df = mfds.to_dataframe().reset_index()
+    if dropna_subset is not None:
+        mfds_df = mfds_df.dropna(subset=dropna_subset) 
+    return mfds_df
 
 def get_all_samples(site_ds):
     """
