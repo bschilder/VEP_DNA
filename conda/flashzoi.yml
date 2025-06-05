@@ -1,0 +1,16 @@
+name: flashzoi
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python>=3.10,<3.13
+  - pooch
+  - scikit-learn
+  # - bioconda::pgenlib # Optional
+  # - xarray # Optional
+  # - zarr # Optional
+  - pip
+  - pip:
+      # - git+https://github.com/mcvickerlab/GenVarLoader.git # Optional
+      - borzoi-pytorch
+      - ipykernel

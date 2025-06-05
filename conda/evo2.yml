@@ -1,0 +1,31 @@
+name: evo2
+channels:
+    - conda-forge
+    - nvidia
+    - pytorch
+dependencies:
+    - python==3.11.11
+    - pandas
+    - IProgress
+    - ipywidgets
+    - ipykernel
+    - entrypoints
+    - setuptools
+    - tqdm
+    - gzip
+    - seaborn
+    - huggingface_hub
+    - pytorch::pytorch==2.5.1
+    - pytorch::pytorch-cuda==12.1 
+    - conda-forge::cudnn
+    - pip
+    - pip:
+        - torchvision 
+        - torchaudio
+        - ninja
+        - cmake
+        - pybind11
+        - psutil
+        - biopython
+        - transformer-engine[pytorch]
+        - flash-attn>= 2.1.1,<= 2.6.3

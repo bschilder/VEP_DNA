@@ -1,0 +1,15 @@
+name: dnabert
+channels:
+    - conda-forge
+dependencies:
+    - pandas
+    - numpy
+    - IProgress
+    - ipywidgets
+    - transformers
+    - einops
+    - pip
+    - pip:
+        - torch
+        - ipykernel
+        - transformers
