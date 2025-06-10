@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import glob
 import xarray as xr
 import polars as pl
 import numpy as np
@@ -794,7 +795,8 @@ def vep_pipeline_onekg(bed,
                         force_gvl = False,
                         force_vep = False,
                         verbose = True, 
-                        checkpoint_frequency = "site"):
+                        checkpoint_frequency = "site", 
+                        device = "cuda"):
     """
     Run the VEP pipeline for the 1000 Genomes project.
 
@@ -811,7 +813,10 @@ def vep_pipeline_onekg(bed,
         max_seqs_per_batch (int): The maximum number of sequences to run the VEP pipeline in a single batch.
             If None, the batch size will be determined by the model name according to get_model_to_batchsize_map().
         limit_regions (int): The maximum number of regions to run the VEP pipeline on.
-        limit_chroms (int): The maximum number of chromosomes to run the VEP pipeline on.
+        limit_chroms (int or list of strings): Limits the number of chromosomes to run the VEP pipeline on.
+            If None, all chromosomes will be run (default).
+            If a list of strings, only the chromosomes in the list will be run.
+            If an integer, the first N chromosomes will be run.
         limit_samples (int): The maximum number of samples to run the VEP pipeline on.
         limit_sites (int): The maximum number of sites to run the VEP pipeline on.
         force_gvl (bool): Whether to force the generation of the GVL database.
@@ -828,6 +833,14 @@ def vep_pipeline_onekg(bed,
             If a value is a list, the site must be in the list.
             If a value is an int, the site must be greater than or equal to the value.
             If a value is a str, the site must contain the value.
+        device (str): The device to run the VEP pipeline on.
+            "cpu": Run on the CPU.
+            "cuda": Run on the GPU.
+            "cuda:2": Run on a specific GPU.
+            "mps": Run on the MPS.
+            "auto": Run on the best available device.
+            If None, the device will be determined by the model name according to get_device().
+        verbose (bool): Whether to print verbose output.
 
     Returns:
         xarray.Dataset: The results of the VEP pipeline.
@@ -848,6 +861,11 @@ def vep_pipeline_onekg(bed,
     manifest = og.list_remote_vcf(key=cohort)
     chroms = manifest['chrom'].unique().tolist()
     chroms.reverse()
+
+    if isinstance(limit_chroms, list):
+        limit_chroms = [str(chrom).replace("chr", "") for chrom in limit_chroms]
+        chroms = [chrom for chrom in chroms if chrom.replace("chr", "") in limit_chroms]
+        limit_chroms = None
 
     # Iterate over chromosomes
     for chrom in tqdm(chroms[:limit_chroms],
@@ -909,13 +927,14 @@ def vep_pipeline_onekg(bed,
                              xr_ds_path=xr_ds_path,
                              run_models=run_models,
                              all_models=all_models,  
-                             max_seqs_per_batch=max_seqs_per_batch,
-                             verbose=verbose,
+                             max_seqs_per_batch=max_seqs_per_batch, 
                              force=force_vep,
                              limit_samples=limit_samples,
                              limit_sites=limit_sites,
                              checkpoint_frequency=checkpoint_frequency,
-                             site_filters=site_filters
+                             site_filters=site_filters,
+                             device=device,
+                             verbose=verbose
                              )
         
     return xr_ds
@@ -957,15 +976,18 @@ def load_vep_results(xr_ds_path,
         return df
     return xr_ds
 
-def load_vep_results_mfdataset(xr_mfds_paths,
+def load_vep_results_mfdataset(xr_mfds_dir,
+                               suffix="*.zarr",
                                concat_dim="sample",
                                combine="nested",
-                               preprocess=lambda x: x.where(x.notnull()).sel(slot="COVR"),
+                               preprocess=None, # lambda x: x.where(x.notnull()).sel(slot="COVR")
                                dropna_subset=None,
                                **kwargs):
     """
     Load the VEP results from a directory of multiple zarr files.
     """ 
+    
+    xr_mfds_paths = glob.glob(os.path.join(xr_mfds_dir, suffix))
     mfds = xr.open_mfdataset(paths=xr_mfds_paths, 
                             concat_dim=concat_dim,
                             combine=combine,

@@ -1,7 +1,7 @@
 import pooch
 import owlready2 as owl
 from tqdm import tqdm
-
+import src.utils as utils
 
 def _process_id(id: str):
     """
@@ -32,6 +32,30 @@ def get_onto_mondo(verbose: bool = False):
     return get_onto("http://purl.obolibrary.org/obo/mondo.owl", 
                     known_hash="faf39917bca366b5b7ee014d499e5004abfd67e2e136c32d535052a39e882d0b", 
                     verbose=verbose)
+
+
+def get_id_map(onto,  
+               first_only: bool = True,
+                verbose: bool = True):
+    """
+    Maps IDs to names.
+    """ 
+    
+    # Get all entities and their labels at once
+    all_entities = list(onto.classes())
+    id_map = {entity.name.replace("_", ":"): entity.label.first() if first_only else entity.label for entity in all_entities}
+    return id_map
+
+def map_ids_to_labels(ids,
+                      onto,
+                      verbose: bool = False):
+    """
+    Maps IDs to labels.
+    """
+    id_map = get_id_map(onto,
+                        first_only=True,
+                        verbose=verbose)
+    return [id_map[id] for id in ids if id in id_map]
 
 
 def get_ancestors(onto,

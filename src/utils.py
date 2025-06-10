@@ -96,7 +96,7 @@ def intersect(x, y, as_list=True):
     else:
         return set(x) & set(y)
 
-def _make_palette(values: list, 
+def make_palette(values: list, 
                   palette: str) -> dict:
     """
     Create a color palette dictionary mapping values to colors.
@@ -126,13 +126,13 @@ def get_clinsig_palette(values=['path', 'likely_path', 'likely_benign', 'benign'
     Returns:
         dict: Dictionary mapping each clinical significance value to a hex color code
     """
-    return _make_palette(values, palette) 
+    return make_palette(values, palette) 
 
 
 
 def get_superpop_palette(values=['AFR', 'AMR', 'EAS', 'EUR', 'SAS'],
                         palette='Set2'):
-    return _make_palette(values, palette)
+    return make_palette(values, palette)
 def save_json(obj,
               save_path,
               verbose=True,
