@@ -11,10 +11,19 @@ DEFAULT_MODEL_NAME = "evo2_7b_base"
 def load_model(model_name: str = DEFAULT_MODEL_NAME,
                device=None,
                eval=False,
+               model_cache=None,
                **kwargs):
     """
     Load the Evo2 model.
     """
+
+    if model_cache is not None:
+        import os
+    
+        os.environ["HF_HOME"] = model_cache
+        os.environ["TRANSFORMERS_CACHE"] = os.path.join(os.environ["HF_HOME"], "transformers")
+        os.environ["HF_DATASETS_CACHE"] = os.path.join(os.environ["HF_HOME"], "datasets")
+
     model = Evo2(model_name)
     
     # Evo2 model object does not have these attributes
