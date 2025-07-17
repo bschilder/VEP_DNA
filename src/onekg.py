@@ -2,10 +2,12 @@ import os
 import pandas as pd
 import pooch
 from tqdm import tqdm
+import glob
+import polars as pl
 
 import src.utils as utils
 import src.config as config
-
+import src.clinvar as cv
 
 DEFAULT_KEY = "1000_Genomes_30x_on_GRCh38"
 
@@ -53,6 +55,7 @@ def get_ftp_dict():
         '1000_Genomes_30x_on_GRCh38':{
             'description': 'VCFs from high-coverage WGS with SNVs, INDELs, and SVs. Details: https://www.internationalgenome.org/data-portal/data-collection/30x-grch38',
             'url': "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/",
+            'merged_vcf':None,
             'manifest': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/20220804_manifest.txt',
             'manifest_cols': ['fname', 'md5'],
             'manifest_sep': ' ',
@@ -64,6 +67,7 @@ def get_ftp_dict():
         '1000_Genomes_on_GRCh38':{
             'description': 'VCFs from low-coverage WGS with SNVs and INDELs. Details: https://www.internationalgenome.org/data-portal/data-collection/grch38',
             'url': "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20190312_biallelic_SNV_and_INDEL/",
+            'merged_vcf':'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz',
             'manifest': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20190312_biallelic_SNV_and_INDEL/20190312_biallelic_SNV_and_INDEL_MANIFEST.txt',
             'manifest_cols': ['fname', 'size', 'md5'],
             'manifest_sep': '\t',
@@ -146,7 +150,7 @@ def list_remote_vcf(key=DEFAULT_KEY,
 
     return manifest
 
-def download_vcfs(key=None,
+def download_vcfs(key=DEFAULT_KEY,
                   manifest=None,
                   skip_checks=False,
                   cache=None,
@@ -212,7 +216,8 @@ def download_vcfs(key=None,
         return list(local_files.values())
 
 
-def get_pop(key=DEFAULT_KEY):
+def get_pop(key=DEFAULT_KEY, 
+            drop_na_index=True):
     """
     Retrieve population information from the 1000 Genomes Project.
     
@@ -233,6 +238,8 @@ def get_pop(key=DEFAULT_KEY):
         return None
     pops = pd.read_csv(url, sep="\t")
     pops.index = pops['Population Code'].tolist()
+    if drop_na_index:
+        pops = pops[pops.index.notna()]
     return pops
 
 def get_ped(key=DEFAULT_KEY):
@@ -475,3 +482,103 @@ def get_onekg_vcf_summary(key=DEFAULT_KEY,
         url = "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/functional_categories_summary_per_superpop.20150217.txt"
     
     return pd.read_csv(url, sep="\t")
+
+
+
+def get_variant_freqs(vcf_path,
+                      contig=None,
+                      start=None,
+                      end=None,
+                      attrs=["CHROM", "POS", "REF", "ALT"],
+                      info=["AF","EAS_AF","EUR_AF","AFR_AF","AMR_AF","SAS_AF"],
+                      progress=True,
+                      **kwargs): 
+    from genoray import VCF 
+    vcf = VCF(vcf_path)
+    vcf_df = vcf.get_record_info(contig=contig,
+                                 start=start, 
+                                 end=end,
+                                 attrs=attrs,
+                                 info=info,
+                                 progress=progress,
+                                 **kwargs)
+    return vcf_df
+
+
+def get_variant_freqs_genomewide(input_path="ALL.*.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz",
+                                 output_path="ALL.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.freqs.parquet",
+                                 key=DEFAULT_KEY,
+                                attrs=["CHROM", "POS", "REF", "ALT"],
+                                info=["AF","EAS_AF","EUR_AF","AFR_AF","AMR_AF","SAS_AF"],
+                                progress=True, 
+                                melt=False): 
+    import polars as pl
+
+    cache = _get_cache_dir(key)
+
+    input_path = os.path.join(cache, input_path)
+    output_path = os.path.join(cache, output_path)
+    if os.path.exists(output_path):
+        print(f"Reading from {output_path}")
+        freqs_df = pl.read_parquet(output_path)
+        if melt:
+            freqs_df = cv.df_to_bed(freqs_df, 
+                                    extra_cols=info,
+                                    extract_ids=False, 
+                                    simplify=False,
+                                    variant_name_alias="site")
+            freqs_df = melt_variant_freqs(freqs_df, on=info)
+        return freqs_df
+    
+    
+    # cache_freqs = os.path.join(
+    #     _get_cache_dir(key), 
+    #     "ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites_freqs.parquet")
+    # if os.path.exists(cache_freqs):
+    #     return pd.read_parquet(cache_freqs)
+    
+
+    # vcf_path = pooch.retrieve("https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz",
+    #             fname="ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz",
+    #         known_hash="381d2eceacd38edbd1c3d11774ec066cc3b4fcbf76a046159adef5446443b7f2")
+    # tbi_path = pooch.retrieve("https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz.tbi",
+    #                     fname="ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz.tbi",
+    #             known_hash="6d162169c89fa538111654aaf61854a1dd498865408c01edd956222baeacbbf2")
+
+    # vcf_df = get_variant_freqs(vcf_path,
+    #                            attrs=attrs,
+    #                            info=info,
+    #                            progress=progress)
+    # print("Caching -->", cache_freqs)
+    # vcf_df.to_parquet(cache_freqs)
+    # return vcf_df 
+    vcf_files = glob.glob(input_path) 
+    print(f"Processing {len(vcf_files)} VCF files")
+    vcf_df = pl.concat([get_variant_freqs(vcf_path =vcf_file, attrs=attrs, info=info, progress=progress) for vcf_file in vcf_files])
+    print(f"Writing to {output_path}")
+    vcf_df.write_parquet(output_path)
+    return vcf_df
+
+
+def melt_variant_freqs(vcf_df,
+                       index=["chrom", "chromStart", "chromEnd", "REF", "ALT", "site"],
+                       on=["AF", "EAS_AF", "EUR_AF", "AFR_AF", "AMR_AF", "SAS_AF"],
+                       variable_name="Super Population",
+                       value_name="AF",
+                       global_af_col="REF"):
+
+    print("Melting variant freqs")
+    freqs_df = vcf_df.unpivot(
+        index=index,
+        on=on,
+        variable_name=variable_name,
+        value_name=value_name
+    )
+    freqs_df = freqs_df.with_columns(
+        pl.when(pl.col(variable_name) == "AF")
+        .then(pl.lit(global_af_col))
+        .otherwise(pl.col(variable_name))
+        .alias(variable_name)
+    )
+    freqs_df = freqs_df.with_columns(pl.col(variable_name).str.replace("_AF", "")) 
+    return freqs_df

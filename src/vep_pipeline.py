@@ -259,32 +259,11 @@ def vep_pipeline(site_ds,
         model = load_model(model_name, device=device, eval=True)  
         
         # Load the tokenizer
-        tokenizer = load_tokenizer(model_name)
+        tokenizer = load_tokenizer(model_name) 
 
-        # Iterate over sites
-        # NOTE:
-        # sites_ds.sites contains all the sites provided to DatasetWithSites.
-        # site_ds.rows contains all the sites provided to DatasetWithSites mapped onto each region in the BED file input to the GVL dataset, resulting in a many:many mapping between regions and sites
-
-        region_to_site = site_ds.rows
-
-        # Filter the sites without affecting the structure of the GVL/xarray datasets
-        if site_filters is not None:
-            for fk, fv in site_filters.items():
-                if isinstance(fv, list):
-                    region_to_site = region_to_site.filter(pl.col(fk).is_in(fv))
-                elif isinstance(fv, int):
-                    region_to_site = region_to_site.filter(pl.col(fk)>=fv)
-                elif isinstance(fv, str):
-                    region_to_site = region_to_site.filter(pl.col(fk).str.contains(fv)) 
-        
-        # Get a single region per site, centered on that site
-        # This avoid unncessary iterations over multiple regions per site
-        region_to_site = (region_to_site
-                          .select(pl.col("region_idx")==pl.col("site_idx"))
-                          .with_row_index()
-                          .filter(pl.col("region_idx")==True)
-                          ) 
+        # Get a single region per site, centered on that site 
+        region_to_site = GVL.filter_region_to_site(region_to_site=site_ds.rows,
+                                                   site_filters=site_filters)
         
         if region_to_site.height == 0:
             if verbose:
@@ -476,8 +455,7 @@ def vep_pipeline(site_ds,
                                       verbose=verbose>1) 
 
     # Return the results as an xarray dataset
-    return xr_ds
-
+    return xr_ds  
 
 def _get_extra_slots():
     return ["time_total",
@@ -794,6 +772,7 @@ def vep_pipeline_onekg(bed,
                         limit_sites = None,
                         force_gvl = False,
                         force_vep = False,
+                        reverse_chroms = True,
                         verbose = True, 
                         checkpoint_frequency = "site", 
                         device = "cuda"):
@@ -821,6 +800,7 @@ def vep_pipeline_onekg(bed,
         limit_sites (int): The maximum number of sites to run the VEP pipeline on.
         force_gvl (bool): Whether to force the generation of the GVL database.
         force_vep (bool): Whether to force the running of the VEP pipeline.
+        reverse_chroms (bool): Whether to reverse the order of the chromosomes when iterating over them.
         verbose (bool): Whether to print verbose output.    
         checkpoint_frequency (str): The frequency to checkpoint the VEP pipeline.
             "site": Checkpoint after each site is processed.
@@ -860,7 +840,8 @@ def vep_pipeline_onekg(bed,
 
     manifest = og.list_remote_vcf(key=cohort)
     chroms = manifest['chrom'].unique().tolist()
-    chroms.reverse()
+    if reverse_chroms:
+        chroms.reverse()
 
     if isinstance(limit_chroms, list):
         limit_chroms = [str(chrom).replace("chr", "") for chrom in limit_chroms]

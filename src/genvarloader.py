@@ -8,6 +8,10 @@ import polars as pl
 import numba as nb
 import pooch
 from tqdm.auto import tqdm
+from typing import Literal
+
+from genoray._vcf import INT64_MAX
+
 
 def prepare_example(save_dir="/grid/koo/home/schilder/projects/GenomeEncoder/data/gvl",
                     bgzip_exec = "~/.conda/envs/genome-loader/bin/bgzip"):
@@ -465,6 +469,14 @@ def create_msa(ref_coords, seq_arr):
         
     Returns:
         2D array containing the gappy MSA
+
+    Example:
+        >>> ref_coords = np.array([[100, 101, 103], [100, 102, 103]])
+        >>> seq_arr = np.array([['A', 'T', 'G'], ['A', 'C', 'G']])
+        >>> create_msa(ref_coords, seq_arr)
+        array([[b'A', b'T', b'G'],
+               [b'A', b'-', b'C'],
+               [b'A', b'-', b'G']], dtype=int8)
     """
     import time
     start_time = time.time()
@@ -697,3 +709,149 @@ def bytearray_to_ohe_torch(seqs,
         print(x.shape)
 
     return x
+
+def get_genomic_complexity_vcf(vcf_path, 
+                                contig=None,
+                                start=0,
+                                end=INT64_MAX,
+                                attrs=["CHROM", "POS", "REF", "ALT"],
+                                # AC=2;AN=5096;DP=18827;AF=0;EAS_AF=0;EUR_AF=0;AFR_AF=0;AMR_AF=0;SAS_AF=0;VT=SNP;NS=2548
+                                info=["AF"],
+                                progress=True):
+    """
+    Calculate the genomic complexity of a region by computing 1 - the mean major allele frequency.
+    
+    Args:
+        vcf_path (str): Path to the VCF file
+        ds: Dataset object (unused parameter)
+        contig (str, optional): Chromosome to analyze. Defaults to None.
+        start (int, optional): Start position. Defaults to 0.
+        end (int, optional): End position. Defaults to INT64_MAX.
+        attrs (list, optional): VCF attributes to extract. Defaults to ["CHROM", "POS", "REF", "ALT"].
+        info (list, optional): VCF INFO fields to extract. Defaults to ["AF"].
+        progress (bool, optional): Whether to show progress bar. Defaults to True.
+    
+    Returns:
+        float: Genomic complexity score calculated as sum of allele frequencies divided by region length
+
+    Example:
+        get_genomic_complexity(vcf_path="../data/1000_Genomes_on_GRCh38/vcf/ALL.chr22.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz",
+                               ds=ds, 
+                               start=100000000,
+                               end=1000000000)
+    """
+    from genoray import VCF 
+
+    vcf = VCF(vcf_path)
+
+    vcf_df = vcf.get_record_info(contig=contig,
+                                 start=start, 
+                                 end=end,
+                                 attrs=attrs,
+                                 info=info,
+                                 progress=progress)  
+    # Return the weighted allele frequency
+    return vcf_df["AF"].sum()/(end - start)
+
+def _get_genomic_complexity_msa_maxAF(msa, alphabet): 
+    counts = {}
+    for letter in alphabet:
+        counts[letter] = np.sum(msa==letter, axis=0)
+
+    freqs = np.max(np.array([counts[letter] for letter in alphabet]), axis=0
+                   ) / msa.shape[0]
+
+    return 1 - freqs.mean()
+
+def _get_genomic_complexity_msa_meanVar(msa): 
+    ohe = utils.one_hot_seq(msa)
+    variance_per_position = ohe.mean(axis=2).var(axis=0)
+    return variance_per_position.mean()
+
+def get_genomic_complexity_msa(msa,
+                               alphabet=[b"A", b"T", b"C", b"G", b"-"],
+                               method: Literal["maxAF", "meanVar"] = "maxAF"):
+    """
+    Calculate the genomic complexity of a MSA.
+    
+    Args:
+        msa: 2D array containing the gappy MSA made with create_msa
+        alphabet: List of letters in the alphabet to count. Defaults to ["A", "T", "C", "G", "-"].
+
+    Returns:
+        float: Genomic complexity score calculated as sum of allele frequencies divided by region length
+    
+    
+    import time
+    region_to_site = GVL.filter_region_to_site(site_ds.rows)
+
+    complexity_scores =  [] 
+    for row_idx in region_to_site["index"]:
+        start_time = time.time()
+        wt_haps, mut_haps, flags = site_ds[row_idx,:]
+        msa = GVL.create_msa(wt_haps.ref_coords, wt_haps.haps) 
+        
+        complexity = GVL.get_genomic_complexity_msa(msa, method="meanVar")    
+        
+        complexity_scores.append(complexity)
+        end_time = time.time()
+        print(f"Total execution time: {end_time - start_time:.2f} seconds")
+
+    complexity_scores
+    
+    """
+    if alphabet is None:
+        alphabet = np.unique(msa)
+ 
+    if method == "maxAF":
+        return _get_genomic_complexity_msa_maxAF(msa, alphabet)
+    elif method == "meanVar":
+        return _get_genomic_complexity_msa_meanVar(msa)
+    else:
+        raise ValueError(f"Method {method} not implemented")
+
+
+def filter_region_to_site(region_to_site,
+                          site_filters=None):
+    """
+    Filter the region_to_site to only include one region per site.
+    This avoids unncessary iterations over multiple regions per site.
+    This function also filters the region_to_site to only include sites that are in the site_filters.
+
+    NOTE:
+    sites_ds.sites contains all the sites provided to DatasetWithSites.
+    site_ds.rows contains all the sites provided to DatasetWithSites mapped onto each region in the BED file input to the GVL dataset, resulting in a many:many mapping between regions and sites
+
+    Args:
+        region_to_site (pl.DataFrame): A polars DataFrame with columns "region_idx" and "site_idx"
+        site_filters (dict): A dictionary of site filters.
+            Keys are column names and values are lists of values to filter on.
+            Values can be lists, integers, or strings.
+
+    Returns:
+        pl.DataFrame: A polars DataFrame with one row per site
+
+    Example:
+        >>> region_to_site = pl.DataFrame({"region_idx": [0, 0, 1, 1, 2, 2], "site_idx": [0, 1, 0, 1, 0, 1]})
+        >>> filter_region_to_site(region_to_site)
+        # Returns a DataFrame with one row per site
+        #   region_idx  site_idx
+        # 0          0        0
+        # 1          1        1
+    """ 
+     # Filter the sites without affecting the structure of the GVL/xarray datasets
+    if site_filters is not None:
+        for fk, fv in site_filters.items():
+            if isinstance(fv, list):
+                region_to_site = region_to_site.filter(pl.col(fk).is_in(fv))
+            elif isinstance(fv, int):
+                region_to_site = region_to_site.filter(pl.col(fk)>=fv)
+            elif isinstance(fv, str):
+                region_to_site = region_to_site.filter(pl.col(fk).str.contains(fv)) 
+
+    region_to_site = (region_to_site
+            .select(pl.col("region_idx")==pl.col("site_idx"))
+            .with_row_index()
+            .filter(pl.col("region_idx")==True)
+            )  
+    return region_to_site

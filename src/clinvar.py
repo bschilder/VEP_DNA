@@ -3,7 +3,20 @@ import pooch
 import polars as pl
 import pandas as pd
 
+import src.utils as utils
 
+
+## Split clinvar.vcf.gx into one file per chromosome
+# https://www.biostars.org/p/9506417/ 
+# %%bash
+# vcf_in=$HOME/.cache/pooch/clinvar.vcf.gz
+# vcf_out_stem=$HOME/.cache/pooch/clinvar_by_chrom
+# mkdir -p $vcf_out_stem
+# bcftools index -s ${vcf_in} | cut -f 1 | while read C; do bcftools view -O z -o ${vcf_out_stem}/chr${C}.vcf.gz ${vcf_in} "${C}" ; done
+
+
+# Detailed informaiton on each VCF field:
+# https://ftp.ncbi.nlm.nih.gov/pub/clinvar/README_VCF.txt
 INFO_COLS_SELECT = [
     "AF_ESP", "AF_EXAC", "AF_TGP", "ALLELEID", "CLNDISDB", "CLNDN",
     "CLNHGVS", "CLNREVSTAT", "CLNSIG", "CLNVC", "CLNVCSO", "CLNSIGCONF",
@@ -40,13 +53,20 @@ def vcf_to_df(vcf_file=None,
               filter=None,#lambda v: "UTR" in v.INFO.get("MC", ""),
               contig=None,
                info = INFO_COLS_SELECT,
+               extract_ids=True,
+               progress=True,
+               cache=os.path.join(pooch.os_cache("pooch"),"clinvar.parquet"),
+               force=False
             ):
     from genoray import VCF
 
     if vcf_file is None:
         vcf_file = download_vcf()["vcf"]
 
- 
+    if os.path.exists(cache) and not force:
+        print(f"Reading from {cache}")
+        return pl.read_parquet(cache)
+    
     vcf = VCF(vcf_file, 
               filter=filter)
 
@@ -55,7 +75,7 @@ def vcf_to_df(vcf_file=None,
     vcf_df = vcf.get_record_info(contig=contig,
                                 attrs=["CHROM", "POS", "REF", "ALT"], 
                                 info=info,
-                                progress=True)
+                                progress=progress)
     # Get the Molecular Consequence (MC) Sequence Ontology (SO) IDs and term names
     vcf_df = vcf_df.with_columns(
         vcf_df["MC"].str.split("|").list.first().alias("MC_id"),
@@ -78,7 +98,12 @@ def vcf_to_df(vcf_file=None,
     vcf_df = vcf_df.with_columns(
         pl.col("CLNREVSTAT").replace(review_score_map).alias("CLNREVSTAT_score").cast(pl.Int8)
     )
+    if extract_ids:
+        vcf_df = _extract_id_cols(vcf_df)
     
+    print(f"Caching to {cache}")
+    vcf_df.write_parquet(cache)
+
     return vcf_df 
 
 
@@ -119,21 +144,108 @@ def simplify_annotations(bed,
                     'Likely_pathogenic':"likely_path",
                     'Pathogenic/Likely_pathogenic/Pathogenic,_low_penetrance':"likely_path",
                     'Benign|other':"benign",
-                    'Benign|confers_sensitivity':"benign"
+                    'Benign|confers_sensitivity':"benign",
+                    'Benign|Affects|association|other': "benign",
+                    'confers_sensitivity': "other",
+                    'no_classification_for_the_single_variant': "other",
+                    'Likely_pathogenic|other': "likely_path",
+                    'Pathogenic/Likely_risk_allele': "likely_path",
+                    'Benign|other': "benign",
+                    'Benign': "benign",
+                    'Benign/Likely_benign|risk_factor': "likely_benign",
+                    'Conflicting_classifications_of_pathogenicity|drug_response': "conflicting",
+                    'Pathogenic|association': "path",
+                    'Uncertain_significance': "other",
+                    'Pathogenic|confers_sensitivity': "path",
+                    'Likely_benign|other': "likely_benign",
+                    'Affects': "other",
+                    'Likely_risk_allele': "likely_path",
+                    'Pathogenic|association|protective': "path",
+                    'Pathogenic|drug_response': "path",
+                    'protective|risk_factor': "other",
+                    'Pathogenic|risk_factor': "path",
+                    'protective': "other",
+                    'Conflicting_classifications_of_pathogenicity|drug_response|other': "conflicting",
+                    'Benign/Likely_benign|drug_response|other': "likely_benign",
+                    'Conflicting_classifications_of_pathogenicity|Affects': "conflicting",
+                    'Likely_pathogenic|Affects': "likely_path",
+                    'Benign/Likely_benign': "likely_benign",
+                    'Likely_benign|drug_response': "likely_benign",
+                    'Likely_benign|drug_response|other': "likely_benign",
+                    'Conflicting_classifications_of_pathogenicity': "conflicting",
+                    'Likely_benign': "likely_benign",
+                    'Benign/Likely_benign|other|risk_factor': "likely_benign",
+                    'association|risk_factor': "other",
+                    'Uncertain_significance|association': "other",
+                    'Benign/Likely_benign|drug_response': "likely_benign",
+                    'Conflicting_classifications_of_pathogenicity|other|risk_factor': "conflicting",
+                    'Benign/Likely_benign|association': "likely_benign",
+                    'Likely_benign|Affects|association': "likely_benign",
+                    'Pathogenic|other': "path",
+                    'Uncertain_risk_allele': "other",
+                    'Benign|confers_sensitivity': "benign",
+                    'Benign|association': "benign",
+                    'Likely_pathogenic|association': "likely_path",
+                    'not_provided': "other",
+                    'Pathogenic|Affects': "path",
+                    'Pathogenic/Likely_pathogenic|risk_factor': "likely_path",
+                    'drug_response': "other",
+                    'Conflicting_classifications_of_pathogenicity|protective': "conflicting",
+                    'Likely_pathogenic/Likely_risk_allele': "likely_path",
+                    'Benign|Affects': "benign",
+                    'confers_sensitivity|other': "other",
+                    'association_not_found': "other",
+                    'other': "other",
+                    # None: "other",
+                    'Pathogenic/Likely_pathogenic|other': "likely_path",
+                    'Benign|risk_factor': "benign",
+                    'Likely_pathogenic|risk_factor': "likely_path",
+                    'Pathogenic/Likely_pathogenic/Pathogenic,_low_penetrance': "likely_path",
+                    'Uncertain_risk_allele|risk_factor': "other",
+                    'Likely_benign|risk_factor': "likely_benign",
+                    'Uncertain_significance|drug_response': "other",
+                    'association|drug_response|risk_factor': "other",
+                    'Conflicting_classifications_of_pathogenicity|association|risk_factor': "conflicting",
+                    'Likely_pathogenic,_low_penetrance': "likely_path",
+                    'risk_factor': "other",
+                    'association': "other",
+                    'no_classifications_from_unflagged_records': "other",
+                    'Uncertain_significance|Affects': "other",
+                    'Uncertain_significance|other': "other",
+                    'Pathogenic|protective': "conflicting",
+                    'Uncertain_significance/Uncertain_risk_allele': "other",
+                    'Uncertain_significance|risk_factor': "other",
+                    'Conflicting_classifications_of_pathogenicity|other': "conflicting",
+                    'Conflicting_classifications_of_pathogenicity|association': "conflicting",
+                    'Pathogenic/Likely_pathogenic/Pathogenic,_low_penetrance|risk_factor': "likely_path",
+                    'Pathogenic/Likely_pathogenic/Likely_risk_allele': "likely_path",
+                    'Benign/Likely_benign|other': "likely_benign",
+                    'Benign|protective': "benign",
+                    'Benign|drug_response': "benign",
+                    'Pathogenic/Pathogenic,_low_penetrance|other|risk_factor': "path",
+                    'Likely_benign|association': "likely_benign",
+                    'Pathogenic/Likely_pathogenic': "likely_path",
+                    'drug_response|other': "other",
+                    'Conflicting_classifications_of_pathogenicity|risk_factor': "conflicting",
+                    'drug_response|risk_factor': "other",
+                    'Pathogenic/Pathogenic,_low_penetrance|other': "path",
+                    'Likely_pathogenic': "likely_path",
+                    'other|risk_factor': "other",
+                    'Pathogenic': "path",
+                    'Likely_pathogenic|drug_response': "likely_path",
+                    'Pathogenic/Likely_pathogenic|association': "likely_path",
+                    'Likely_pathogenic|protective': "likely_path"
                     }},
             
-                {"input_col": "CLNSIG",
+                {"input_col": "CLNSIG_simple",
                 "output_col": "CLNSIG_super_simple",
                 "map": {
-                    'Benign':"benign",
-                    'Likely_benign':"benign",
-                    'Benign/Likely_benign':"benign",
-                    'Pathogenic/Likely_pathogenic':"path",
-                    'Pathogenic':"path",
-                    'Likely_pathogenic':"path",
-                    'Pathogenic/Likely_pathogenic/Pathogenic,_low_penetrance':"path",
-                    'Benign|other':"benign",
-                    'Benign|confers_sensitivity':"benign"
+                    'benign':"benign",
+                    'likely_benign':"benign",
+                    'pathogenic':"path",
+                    'likely_pathogenic':"path",
+                    'conflicting':"conflicting",
+                    'other':"other"
                     }},
         ]
 
@@ -141,53 +253,31 @@ def simplify_annotations(bed,
     if isinstance(bed, pd.DataFrame):
         bed = pl.DataFrame(bed)
         was_pandas = True
+    
     if verbose:
         print("Simplifying annotations.")
     for map in maps:
-        bed = bed.with_columns(pl.col(map["input_col"]).replace_strict(map["map"]).alias(map["output_col"]))
+        if map["input_col"] in bed.columns and map["output_col"] not in bed.columns:
+            bed = bed.with_columns(pl.col(map["input_col"]).replace_strict(map["map"], default=pl.lit("other")).alias(map["output_col"]))
      
-    bed = bed.with_columns(pl.col("GENEINFO").str.split(":").list.first().alias("GENE"))
+    if "GENEINFO" in bed.columns and "GENE" not in bed.columns:
+        bed = bed.with_columns(pl.col("GENEINFO").str.split(":").list.first().alias("GENE"))
 
     if was_pandas:
         bed = bed.to_pandas()
-    return bed
+    return bed 
 
-def add_variant_name(df,
-                    chrom_col='chrom',
-                    start_col='chromStart',
-                    end_col='chromEnd',
-                    ref_col='REF',
-                    alt_col='ALT',
-                    alias='name'):
-    """Add a variant name column to a DataFrame.
-    
-    Args:
-        df: Polars DataFrame
-        chrom_col: Column name for chromosome
-        start_col: Column name for start position
-        end_col: Column name for end position
-        ref_col: Column name for reference allele
-        alt_col: Column name for alternate allele
-        alias: Name for the output column
-        
-    Returns:
-        DataFrame with added variant name column
-    """
-    return df.with_columns(pl.concat_str([
-        pl.lit('chr'),
-        pl.col(chrom_col).str.replace('chr', ''),
-        pl.lit(':'),
-        pl.col(start_col).cast(pl.Utf8),
-        pl.lit('-'),
-        pl.col(end_col).cast(pl.Utf8),
-        pl.lit('_'),
-        pl.col(ref_col),
-        pl.lit('_'),
-        pl.col(alt_col)
-    ]).alias(alias))
+def _explode_col(df, col):
+    if df[col].dtype.__str__()=='List(String)':
+        df = df.explode(col)
+    return df
 
 def df_to_bed(vcf_df,  
-              save_path=None):
+              save_path=None,
+              extract_ids=True,
+              variant_name_alias="name",
+              extra_cols=[],
+              simplify=True):
     """Convert VCF DataFrame to BED format.
     
     Args:
@@ -197,26 +287,30 @@ def df_to_bed(vcf_df,
     Returns:
         DataFrame in BED format
     """
+
+    vcf_df = _explode_col(vcf_df, "ALT")
+
     bed = vcf_df.rename({
         'CHROM': 'chrom',
         'POS': 'chromStart',
     }).with_columns([
         # pl.lit(None).alias('strand'),
-        (pl.col("CLNREVSTAT_score").alias("score")),
-        (pl.col('chromStart') + pl.col('REF').str.len_chars()).alias('chromEnd'),
-        (pl.col('ALT').list.join(',').alias('ALT')),
+        (pl.col('chromStart') + pl.col('REF').str.len_chars()).alias('chromEnd')
     ])
+    if "CLNREVSTAT_score" in vcf_df.columns:
+        bed = bed.with_columns(pl.col("CLNREVSTAT_score").alias("score"))
     
     # Add variant name using the function instead of method
-    bed = add_variant_name(bed)
+    if variant_name_alias is not None:
+        bed = utils.add_variant_name(bed, alias=variant_name_alias)
     
-    bed = bed.select([
+    select_cols = [
         # required columns
         'chrom',
         'chromStart',
         'chromEnd',
         # optional columns
-        "name",
+        variant_name_alias,
         "score",
         # "strand",
         # extra columns
@@ -228,10 +322,18 @@ def df_to_bed(vcf_df,
         "CLNREVSTAT_score"
         
         # "MC", "ORIGIN", "RS"
-    ]).filter(pl.col('chrom').str.contains('^[0-9]+$|^X$|^Y$'))
+    ] + extra_cols
+    select_cols = [col for col in select_cols if col in bed.columns]
+    bed = bed.select(select_cols).filter(pl.col('chrom').str.contains('^[0-9]+$|^X$|^Y$'))
 
     bed = bed.with_columns(pl.col('ALT').fill_null("")).drop_nulls(subset=['ALT'])
     bed = bed.with_columns(pl.col('REF').fill_null("")).drop_nulls(subset=['REF'])
+
+    if extract_ids:
+        bed = _extract_id_cols(bed) 
+
+    if simplify:
+        bed = simplify_annotations(bed)
 
     if save_path:
         bed.to_pandas().to_csv(save_path, sep='\t', index=False)
@@ -247,10 +349,10 @@ def df_to_sites(vcf_df):
     ])
 
     # Add variant name using the function instead of method
-    sites = add_variant_name(sites,
-                             chrom_col='CHROM',
-                             start_col='POS',
-                             end_col='POS_END')
+    sites = utils.add_variant_name(sites,
+                                    chrom_col='CHROM',
+                                    start_col='POS',
+                                    end_col='POS_END')
     
     sites = sites.select([
         # required columns
@@ -301,27 +403,22 @@ def bed_to_sites(bed):
     return sites
 
 def _extract_id_cols(df,
+                     search_terms=["MONDO", "OMIM", "Orphanet", "MedGen", "MeSH"],
                      add_counts=True,
                      verbose=True):
     if verbose:
         print("Extracting ID columns.")
-    df = df.with_columns(
-        pl.col("CLNDISDB").str.extract_all(r'(MONDO:[^,|]+)').alias("MONDO"),
-        pl.col("CLNDISDB").str.extract_all(r'(OMIM:[^,|]+)').alias("OMIM"),
-        pl.col("CLNDISDB").str.extract_all(r'(Orphanet:[^,|]+)').alias("Orphanet"), 
-        pl.col("CLNDISDB").str.extract_all(r'(MedGen:[^,|]+)').alias("MedGen"),
-        pl.col("CLNDISDB").str.extract_all(r'(MeSH:[^,|]+)').alias("MeSH"),
-    )
-    if add_counts:
-        if verbose:
-            print("Adding ID counts.")
-        df = df.with_columns(
-            pl.col("MONDO").list.len().alias("MONDO_n"),
-            pl.col("OMIM").list.len().alias("OMIM_n"),
-            pl.col("Orphanet").list.len().alias("Orphanet_n"),
-            pl.col("MedGen").list.len().alias("MedGen_n"),
-            pl.col("MeSH").list.len().alias("MeSH_n"),
-        )
+    for id_type in search_terms:
+        if id_type not in df.columns:
+            df = df.with_columns(
+                pl.col("CLNDISDB").str.extract_all(f'({id_type}:[^,|]+)').alias(id_type)
+            )
+        if add_counts:
+            if f"{id_type}_n" not in df.columns:
+                df = df.with_columns(
+                    pl.col(id_type).list.len().alias(f"{id_type}_n")
+                )
+    
     return df
 
 
@@ -427,3 +524,23 @@ def filter_df(vcf_df,
         print(f"Gene count: {cv_df['GENEINFO'].unique().len()}")
 
     return cv_df
+
+
+def count_sites_per_gene(vcf_df=None,
+                         groupby_cols=["MONDO","GENEINFO"],
+                         sort=True):
+    """
+    Count the number of sites per gene in the VCF DataFrame.
+    """
+    if vcf_df is None:
+        vcf_df = vcf_to_df()
+
+    cv_df = utils.add_variant_name(df_to_bed(vcf_df))
+
+    vpd = cv_df.explode("MONDO").group_by(groupby_cols).agg(pl.col("name").n_unique()).sort("MONDO").to_pandas().rename(columns={"name":"sites"})
+    vpd = vpd.loc[vpd["MONDO"].notnull()]
+    vpd.loc[:,"MONDO"]  = vpd["MONDO"].str.replace("MONDO:MONDO:","MONDO:")
+    if sort:
+        vpd.sort_values("sites", ascending=False)
+
+    return vpd

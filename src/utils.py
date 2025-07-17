@@ -132,7 +132,10 @@ def get_clinsig_palette(values=['path', 'likely_path', 'likely_benign', 'benign'
 
 def get_superpop_palette(values=['AFR', 'AMR', 'EAS', 'EUR', 'SAS'],
                         palette='Set2'):
-    return make_palette(values, palette)
+    palette = make_palette(values, palette)
+    palette["REF"] = "grey"
+    return palette
+
 def save_json(obj,
               save_path,
               verbose=True,
@@ -585,3 +588,211 @@ def wasserstein_distance_permuted(p,
     # distributions are likely different.
     
     return p_value, d_obs, null_dist
+
+
+
+
+
+def add_variant_name(df,
+                    chrom_col='chrom',
+                    start_col='chromStart',
+                    end_col='chromEnd',
+                    ref_col='REF',
+                    alt_col='ALT',
+                    alias='name',
+                    force=False):
+    """Add a variant name column to a DataFrame.
+    
+    Args:
+        df: Polars or Pandas DataFrame
+        chrom_col: Column name for chromosome
+        start_col: Column name for start position
+        end_col: Column name for end position. 
+            If None, the end position is calculated as the start position + the length of the reference allele.
+        ref_col: Column name for reference allele
+        alt_col: Column name for alternate allele
+        alias: Name for the output column
+        force: Whether to overwrite existing column
+    Returns:
+        DataFrame with added variant name column
+    """
+    import polars as pl
+    import pandas as pd
+
+    if alias in df.columns and not force:
+        print(f"Column {alias} already exists in dataframe, skipping")
+        return df
+    
+    was_pandas = isinstance(df, pd.DataFrame)
+    if was_pandas:
+        df = pl.DataFrame(df)
+    
+    result = df.with_columns(pl.concat_str([
+        pl.lit('chr'),
+        pl.col(chrom_col).cast(pl.Utf8).str.replace('chr', ''),
+        pl.lit(':'),
+        pl.col(start_col).cast(pl.Utf8),
+        pl.lit('-'),
+        pl.when(pl.lit(end_col).is_null())
+        .then(pl.col(start_col).cast(pl.Utf8) + pl.col(ref_col).str.len_chars().cast(pl.Utf8))
+        .otherwise(pl.col(end_col).cast(pl.Utf8) if end_col is not None else pl.col(start_col).cast(pl.Utf8)),
+        pl.lit('_'),
+        pl.col(ref_col),
+        pl.lit('_'),
+        pl.col(alt_col)
+    ]).alias(alias))
+    
+    if was_pandas:
+        result = result.to_pandas()
+    
+    return result
+
+
+def vep_to_matrix(
+    vep_df,
+    sample_col="sample",
+    site_col="site",
+    vep_col="VEP",
+    fill_value=np.nan
+):
+    """
+    Convert a VEP (Variant Effect Predictor) DataFrame to a matrix format.
+
+    This function pivots a long-form VEP DataFrame into a matrix (wide-form) where rows correspond to samples,
+    columns correspond to variant sites, and values are the VEP scores. If there are multiple VEP scores for the
+    same sample-site pair, their mean is taken. Missing values are filled with `fill_value`.
+
+    Parameters
+    ----------
+    vep_df : pandas.DataFrame
+        Input DataFrame in long format, containing at least the sample, site, and VEP score columns.
+    sample_col : str, optional
+        Name of the column in `vep_df` identifying samples. Default is "sample".
+    site_col : str, optional
+        Name of the column in `vep_df` identifying variant sites. Default is "site".
+    vep_col : str, optional
+        Name of the column in `vep_df` containing VEP scores. Default is "VEP".
+    fill_value : scalar, optional
+        Value to use for missing entries in the resulting matrix. Default is np.nan.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A matrix (DataFrame) with samples as rows, sites as columns, and VEP scores as values.
+
+    Examples
+    --------
+    >>> df = pd.DataFrame({
+    ...     "sample": ["A", "A", "B", "B"],
+    ...     "site": ["s1", "s2", "s1", "s2"],
+    ...     "VEP": [0.1, 0.2, 0.3, 0.4]
+    ... })
+    >>> vep_to_matrix(df)
+       s1   s2
+    A  0.1  0.2
+    B  0.3  0.4
+    """
+
+    # Use much faster groupby.unstack with built-in mean (skipna by default)
+    # takes 4.7s, as opposed to pivot_table which takes 90 seconds!
+    X = vep_df.groupby([sample_col, site_col], sort=False)[vep_col].mean().unstack(fill_value=fill_value)
+    return X
+
+def vep_distance(
+    X, 
+    og_meta=None,
+    site_cols=None, 
+    groupby_cols=None,
+    sample_col="sample",
+    metric='euclidean'
+):
+    """
+    Compute a pairwise distance matrix between groups or samples based on VEP (variant effect predictor) data.
+
+    This function calculates the Euclidean distance between group centroids (or samples) for the specified site columns.
+    If `groupby_cols` is provided, the function computes the mean value of each site column for each group and then
+    computes the pairwise distances between these group centroids. If `groupby_cols` is not provided, distances are
+    computed directly between the rows of `X`.
+
+    Parameters
+    ----------
+    X : pandas.DataFrame
+        A sample (individual) x site (clinical variant) DataFrame containing VEP scores. 
+        Each row should correspond to a sample, and columns should correspond to sites or features.
+    og_meta : pandas.DataFrame, optional
+        Sample metadata DataFrame. If not provided, it will be loaded from `src.onekg.get_sample_metadata()`.
+        This is used to map samples to groups if `groupby_cols` is specified.
+    site_cols : list of str, optional
+        List of columns in `X` to use for distance calculation. If None, all columns in `X` are used.
+    groupby_cols : list of str or str, optional
+        Column(s) in the metadata to group by. If provided, distances are computed between group centroids.
+    sample_col : str, optional
+        Column in `X` to use as the sample identifier. Default is 'sample'.
+    metric : str, optional
+        The distance metric to use. Default is 'euclidean'. 
+
+    Returns
+    -------
+    pandas.DataFrame
+        A square DataFrame of pairwise Euclidean distances between groups (if `groupby_cols` is given)
+        or between samples (if not). The rows and columns are labeled by group or sample.
+
+    Notes
+    -----
+    - The function uses Euclidean distance for continuous data. For binary/categorical data, consider using
+      'hamming' distance.
+    - The function expects that the index of `X` contains sample identifiers matching the "Individual ID" in `og_meta`.
+    """
+    from scipy.spatial.distance import pdist, squareform
+
+    if og_meta is None:
+        import src.onekg as og
+        og_meta = og.get_sample_metadata()
+    if site_cols is None:
+        site_cols = X.columns.tolist()
+    if groupby_cols is not None:
+        group_centroids = (
+            X.reset_index()
+            .merge(og_meta, left_on=sample_col, right_on="Individual ID", how="left")
+            .groupby(groupby_cols)[site_cols]
+            .mean()
+        )
+    else:
+        group_centroids = X
+
+    dists = pdist(group_centroids.values, metric=metric)
+    dist_square = squareform(dists)
+
+    group_labels = group_centroids.index.tolist()
+    distVEP = pd.DataFrame(dist_square, index=group_labels, columns=group_labels)
+    return distVEP
+
+
+def sort_chromosomes(df, chrom_col="chrom"):
+    """
+    Sort chromosomes by natural order: "chr1", "chr2", ..., "chr22", "chrX", "chrY", "chrM"
+    """
+    import re
+
+    def chrom_key(chrom):
+        chrom = str(chrom)
+        # Extract the part after 'chr'
+        m = re.match(r"chr(\d+|X|Y|M)$", chrom)
+        if m:
+            val = m.group(1)
+            if val.isdigit():
+                return (0, int(val))
+            elif val == "X":
+                return (1, 23)
+            elif val == "Y":
+                return (1, 24)
+            elif val == "M":
+                return (1, 25)
+        # If doesn't match, put at the end
+        return (2, chrom)
+
+    df_sorted = df.copy()
+    df_sorted["_chrom_sort_key"] = df_sorted[chrom_col].map(chrom_key)
+    df_sorted = df_sorted.sort_values(by="_chrom_sort_key")
+    df_sorted = df_sorted.drop(columns=["_chrom_sort_key"])
+    return df_sorted

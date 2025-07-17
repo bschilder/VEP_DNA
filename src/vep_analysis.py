@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import numpy as np
 
 import src.utils as utils
 
@@ -63,18 +64,25 @@ def estimate_runtime(vep_df,
 
 def add_onekg_metadata(vep_df,
                        sample_col = "sample",
+                       cols=None,
                        metadata_df = None,
                        how = "left"):
     
     if metadata_df is None:
         import src.onekg as og
         metadata_df = og.get_sample_metadata()
-    vep_df = vep_df.merge(metadata_df,
-                           left_on=sample_col, 
-                          right_on="Individual ID", 
-                          how=how)
-    vep_df.loc[vep_df["sample"]=="REF", "Super Population"] = "REF"
-    vep_df.loc[vep_df["sample"]=="REF", "Population"] = "REF"
+    if cols is None:
+        cols = metadata_df.columns
+
+    if all(col in vep_df.columns for col in cols):
+        print(f"All cols already in vep_df, skipping")
+    else:
+        vep_df = vep_df.merge(metadata_df[cols],
+                            left_on=sample_col, 
+                            right_on="Individual ID", 
+                            how=how)
+        vep_df.loc[vep_df["sample"]=="REF", "Super Population"] = "REF"
+        vep_df.loc[vep_df["sample"]=="REF", "Population"] = "REF"
     return vep_df
 
 
@@ -86,7 +94,7 @@ def plot_violin(df,
                 col="slot",
                 palette=utils.get_clinsig_palette(),
                 cut=0,
-                height=3,
+                height=4,
                 aspect=1,
                 sharey=False,
                 sharex=True, 
@@ -120,6 +128,8 @@ def plot_kde(df,
              x="flashzoi",
              hue="CLNSIG_simple",
              row="slot",
+             agg_vars=None,
+             agg_func="mean",
              col=None, 
              height=3,
              aspect=2,
@@ -130,6 +140,10 @@ def plot_kde(df,
              sharex=False,
              **kwargs):
     # Filter for delta metrics and create 2D density plot with facets
+
+    # Aggregate data to make plotting much faster
+    if agg_vars is not None:
+        df = df.groupby(agg_vars).agg({x: agg_func}).reset_index()
 
     g = sns.FacetGrid(df, 
                     row=row, 
@@ -340,7 +354,7 @@ def plot_vep_by_superpop(vep_df,
     fig = plt.figure(figsize=figsize)
     gs = fig.add_gridspec(nrows=n_pops + 3, 
                           ncols=1, 
-                          height_ratios= [1.5]+[1]+([1] * (n_pops + 1)), 
+                          height_ratios= [2]+[1]+([1] * (n_pops + 1)), 
                           hspace=0.1,
                           top=0.9)
  
@@ -348,13 +362,11 @@ def plot_vep_by_superpop(vep_df,
     ax0 = fig.add_subplot(gs[0])
     
     # Add REF lines and labels first
-    ref_rows = plot_df.loc[plot_df["is_ref"]==True].groupby([metric_col,gene_col, variant_col]).head(1)
+    ref_rows = plot_df.loc[plot_df["is_ref"]==True].drop_duplicates(subset=[variant_col])
     label_map = {"path":"P", "benign":"B", "likely_path":"LP", "likely_benign":"LB"}
-    
     # Create a new subplot for labels above the histogram
     ax_labels = fig.add_subplot(gs[0])
     ax_labels.set_axis_off()  # Hide the axis
-    
     for _, row in ref_rows.iterrows():
         ref_value = row[vep_col]
         ax0.axvline(x=ref_value, color=mutant_palette[row[variant_col]], linestyle='--', label=row[variant_col])
@@ -367,6 +379,7 @@ def plot_vep_by_superpop(vep_df,
                       va='bottom', 
                       ha='right',
                       transform=ax0.transData)  # Use the data coordinates from ax0
+        
     # Now add the main histogram showing each mutant's distribution
     if multi_mutant:
         sns.histplot(data=plot_df, 
@@ -468,12 +481,12 @@ def plot_vep_by_superpop(vep_df,
                     \n• Variant (Protein): {plot_df['CLNHGVS'].iloc[0]} ({plot_df[gene_col].iloc[0]})\
                     \n• Disease: {row_selected['MONDO_label'].replace('_',' ')}\
                     \n• Review Status: {plot_df['CLNREVSTAT'].iloc[0].replace('_',' ')}", 
-                    y=1.02, x=0.125, ha='left')
+                    y=1.03, x=0.125, ha='left')
     else:
         plt.suptitle(f"Distribution of VEP scores by Super Population\
                      \n• Haplotypes: {plot_df['haplotype'].nunique()}\
                      \n• Variants: {plot_df.groupby(clinsig_col)[variant_col].nunique().to_dict()}\
-                     \n• Genes: {plot_df[gene_col].iloc[0].split(":")[0] if plot_df[gene_col].nunique() == 1 else plot_df[gene_col].nunique()})\
+                     \n• Genes: {plot_df[gene_col].iloc[0].split(":")[0] if plot_df[gene_col].nunique() == 1 else plot_df[gene_col].nunique()}\
                      \n• Diseases: {plot_df['CLNDN'].iloc[0] if plot_df['CLNDN'].nunique() == 1 else plot_df['CLNDN'].nunique()}\
                      ", 
                      y=1.03, x=0.125, ha='left')
@@ -578,3 +591,228 @@ def plot_top_mondo(within_site_var_mean,
     for i, row in enumerate(plot_dat.itertuples()):
         ax.text(getattr(row, vep_col) + plot_dat[vep_col].max()*0.01, i, f"({row.site})", 
                 va='center', ha='left')
+        
+
+# Exponential decay
+def exp_func(x, a, b):
+    return a * np.exp(b * x)
+
+ # Exponential decay: y = a * exp(-b * x)
+def exp_decay_func(x, a, b):
+    return a * np.exp(-b * x)
+
+# Logistic function
+def logistic_func(x, L, k, x0):
+    return L / (1 + np.exp(-k * (x - x0)))
+
+# Quadratic polynomial
+def poly2_func(x, a, b, c):
+    return a * x**2 + b * x + c
+
+def linear_func(x, a, b):
+    return a * x + b
+
+
+def fit_curve_and_plot(x, y, ax, fit_model="logistic", alpha=0.6):
+    """Helper function to fit curve and plot it with confidence intervals"""
+    from scipy import stats
+    from scipy.optimize import curve_fit
+    
+    # Fit the selected model
+    if fit_model == "logistic":
+        popt, pcov = curve_fit(logistic_func, x, y, maxfev=10000)
+        y_pred = logistic_func(x, *popt)
+    elif fit_model == "exp":
+        popt, pcov = curve_fit(exp_func, x, y, maxfev=10000)
+        y_pred = exp_func(x, *popt)
+    elif fit_model == "exp_decay": 
+        popt, pcov = curve_fit(exp_decay_func, x, y, maxfev=10000)
+        y_pred = exp_decay_func(x, *popt)
+    elif fit_model == "poly2":
+        popt, pcov = curve_fit(poly2_func, x, y, maxfev=10000)
+        y_pred = poly2_func(x, *popt)
+    elif fit_model == "linear":
+        popt, pcov = curve_fit(linear_func, x, y, maxfev=10000)
+        y_pred = linear_func(x, *popt)
+    else:
+        raise ValueError(f"Invalid fit model: {fit_model}")
+
+    # Calculate R²
+    residuals = y - y_pred
+    ss_res = np.sum(residuals ** 2)
+    ss_tot = np.sum((y - np.mean(y)) ** 2)
+    r2 = 1 - (ss_res / ss_tot)
+    
+    # Calculate p-value using F-test
+    n = len(x)
+    p = len(popt)
+    f_stat = (ss_tot - ss_res) / p / (ss_res / (n - p))
+    p_value = 1 - stats.f.cdf(f_stat, p, n - p)
+    
+    # Plot curve and confidence intervals
+    x_line = np.linspace(x.min(), x.max(), 100)
+    if fit_model == "logistic":
+        y_line = logistic_func(x_line, *popt)
+        perr = np.sqrt(np.diag(pcov))
+        y_upper = logistic_func(x_line, *(popt + 1.96 * perr))
+        y_lower = logistic_func(x_line, *(popt - 1.96 * perr))
+    elif fit_model == "exp":
+        y_line = exp_func(x_line, *popt)
+        perr = np.sqrt(np.diag(pcov))
+        y_upper = exp_func(x_line, *(popt + 1.96 * perr))
+        y_lower = exp_func(x_line, *(popt - 1.96 * perr))
+    elif fit_model == "exp_decay":
+        y_line = exp_decay_func(x_line, *popt)
+        perr = np.sqrt(np.diag(pcov))
+        y_upper = exp_decay_func(x_line, *(popt + 1.96 * perr))
+        y_lower = exp_decay_func(x_line, *(popt - 1.96 * perr))
+    elif fit_model == "poly2":
+        y_line = poly2_func(x_line, *popt)
+        perr = np.sqrt(np.diag(pcov))
+        y_upper = poly2_func(x_line, *(popt + 1.96 * perr))
+        y_lower = poly2_func(x_line, *(popt - 1.96 * perr))
+    elif fit_model == "linear":
+        y_line = linear_func(x_line, *popt)
+        perr = np.sqrt(np.diag(pcov))
+        y_upper = linear_func(x_line, *(popt + 1.96 * perr))
+        y_lower = linear_func(x_line, *(popt - 1.96 * perr))
+    ax.fill_between(x_line, y_lower, y_upper, color='black', alpha=0.1)
+    ax.plot(x_line, y_line, color='black', alpha=alpha)
+    
+    # Add R² and p-value as text
+    ax.text(0.95, 0.95, f'R² = {r2:.3f}\np = {p_value:.2e}', 
+           transform=ax.transAxes, 
+           verticalalignment='top',
+           horizontalalignment='right',
+           bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    return r2, p_value
+
+def plot_vep_vs_af(df,
+                   vep_col="VEP",
+                   af_col="AF",
+                   col=None,
+                   hue="CLNSIG_simple",
+                   logy=False,
+                   logx=False,
+                   sharex=True, 
+                   sharey=True,
+                   palette="Set2",
+                   height=4, 
+                   fit_line=True,
+                   alpha=0.6,
+                   aspect=1,
+                   xlim=None,
+                   ylim=(0, 1),
+                   fit_model="logistic",
+                   ax=None,
+                   col_wrap=3
+                   ): 
+
+    # Create a figure with subplots for each CLNSIG_simple category
+    epsilon = 1e-6
+
+    df = df.copy()
+
+    df.dropna(subset=[vep_col, af_col], inplace=True)
+    df.loc[:, "VEP_log"] = np.log10(df[vep_col] + epsilon)
+    df.loc[:, "AF_log"] = np.log10(df[af_col] + epsilon)
+
+    if col is not None and col == "Super Population":
+        col_order = ["REF"]+[x for x in df["Super Population"].unique().tolist() if x!="REF"]
+        df.loc[:, "Super Population"] = pd.Categorical(df["Super Population"], categories=col_order, ordered=True)
+        df = df.sort_values(by="Super Population")
+    else:
+        col_order = None
+    if hue is not None and hue == "CLNSIG_simple":
+        hue_order = list(utils.get_clinsig_palette().keys())
+        hue_order.reverse()
+        df.loc[:, "CLNSIG_simple"] = pd.Categorical(df["CLNSIG_simple"], categories=hue_order, ordered=True)
+        df = df.sort_values(by="CLNSIG_simple")
+    else:
+        hue_order = None
+
+    if logy:
+        y_var = "AF_log"
+    else:
+        y_var = af_col
+    if logx:
+        x_var = "VEP_log"
+    else:
+        x_var = vep_col
+
+    # Get appropriate color palette
+    if hue=="Super Population":
+        cmap = utils.get_superpop_palette()
+    elif hue=="CLNSIG_simple":
+        cmap = utils.get_clinsig_palette()
+    else:
+        cmap = utils.make_palette(df[hue].unique(), palette=palette)
+
+    # Create figure based on whether faceting is requested
+    if col is None:
+        plt.figure(figsize=(height*aspect, height))
+        if ax is None:
+            ax = plt.gca()
+        
+        # Add scatter plot
+        sns.scatterplot(data=df,
+                       x=x_var,
+                       y=y_var, 
+                       hue=hue,
+                       palette=cmap,
+                       alpha=alpha,
+                       ax=ax)
+
+        # Add regression line and calculate statistics
+        if fit_line:
+            fit_curve_and_plot(df[x_var], df[y_var], ax, fit_model, alpha)
+            
+        if xlim is not None:
+            ax.set_xlim(xlim)
+        if ylim is not None:
+            # Set y-ticks to show only the range we want to display
+            ax.set_yticks(np.linspace(ylim[0], ylim[1], 5))
+            # Don't set ylim to allow points to be visible outside the tick range
+        plt.title(f"Variants: {df['site'].nunique()}")
+        
+    else:
+        g = sns.FacetGrid(df, 
+                        col=col,
+                        sharex=sharex, 
+                        sharey=sharey,
+                        col_wrap=col_wrap, 
+                        height=height,
+                        aspect=aspect,
+                        col_order=col_order,
+                        margin_titles=True)
+
+        # Add scatter plot
+        g.map_dataframe(sns.scatterplot, 
+                        x=x_var,
+                        y=y_var, 
+                        hue=hue,
+                        palette=cmap,
+                        alpha=alpha)
+
+        # Add curve fit to each facet
+        if fit_line:
+            def fit_and_plot_facet(data, **kwargs):
+                ax = plt.gca()
+                fit_curve_and_plot(data[x_var], data[y_var], ax, fit_model, alpha)
+                if ylim is not None:
+                    # Set y-ticks to show only the range we want to display
+                    ax.set_yticks(np.linspace(ylim[0], ylim[1], 5))
+            
+            g.map_dataframe(fit_and_plot_facet)
+
+        g.add_legend()
+        g.fig.suptitle(f"Variants: {df['site'].nunique()}", y=1.02)
+        if xlim is not None:
+            g.set(xlim=xlim)
+        if ylim is not None:
+            # Set y-ticks for all facets
+            for ax in g.axes.flat:
+                ax.set_yticks(np.linspace(ylim[0], ylim[1], 5))
+    
+    plt.show()
