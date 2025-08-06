@@ -308,11 +308,12 @@ def plot_superpop_dendrogram(
     X, 
     og_meta=None, 
     palette=None, 
-    groupby_col="Population Description", 
+    groupby_col="population_name", 
+    sample_col="sample",
     site_cols=None, 
     figsize=(8, 10), 
-    title="Hierarchical Clustering Dendrogram of Superpopulations (by DR centroid)",
-    ylabel="Ward distance (centroid in DR space)"
+    title="Hierarchical clustering dendrogram of superpopulations (by group centroid)",
+    ylabel="Ward distance (by group centroid)"
 ):
     """
     Compute and plot a dendrogram of superpopulation centroids in high-dimensional space.
@@ -350,7 +351,7 @@ def plot_superpop_dendrogram(
     # Compute centroids
     group_centroids = (
         X.reset_index()
-         .merge(og_meta, left_on="sample", right_on="Individual ID", how="left")
+         .merge(og_meta, on=sample_col, how="left")
          .groupby(groupby_col)[site_cols]
          .mean()
     )
@@ -871,3 +872,44 @@ def batch_process_trees(tree_collection: TreeSequenceCollection,
     
     return results
 
+def get_population_variant_matrix(ts: tskit.TreeSequence,
+                                  metadata_field: str = "name"):
+    """
+    Get the population x variant matrix for a tree sequence.
+
+    Parameters
+    ----------
+    ts : tskit.TreeSequence
+        The tree sequence to compute the population x variant matrix for
+    metadata_field : str, optional
+        The field in the population metadata to use for the population name
+        (default: "name")
+
+    Returns
+    -------
+    np.ndarray
+        The population x variant matrix
+    """
+    # Efficiently compute the population x variant matrix without repeated simplification
+    import json
+
+    # Map population names to their sample indices in the tree sequence
+    pop_samples_dict = {}
+    for p in ts.populations():
+        pop_name = json.loads(p.metadata)[metadata_field]
+        pop_samples_dict[pop_name] = ts.samples(population=p.id)
+
+    # Get the full genotype matrix once (shape: variants x samples)
+    print("Loading genotype matrix")
+    G = ts.genotype_matrix()  # shape: (num_sites, num_samples)
+
+    # For each population, compute the mean genotype per variant across its samples
+    pop_names = list(pop_samples_dict.keys())
+    pxv = np.stack([
+        G[:, pop_samples_dict[pop_name]].mean(axis=1)
+        for pop_name in tqdm(pop_names, desc="Computing population variant matrices")
+    ])
+    print(pxv.shape)
+    
+    return pxv
+ 

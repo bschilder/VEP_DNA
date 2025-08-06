@@ -119,6 +119,8 @@ def compute_vep_metrics(trks_wt, trks_mut,
     assert trks_wt.ndim == 2 or trks_wt.ndim == 3, "WT and MUT tracks must be 2D or 3D"
 
     results = {}
+    results["trks_wt"] = trks_wt
+    results["trks_mut"] = trks_mut
     results["delta"] = trks_mut - trks_wt
     # For unbatched results, compute metrics
     # Each key stores a tensor of length 1
@@ -210,7 +212,7 @@ def run_vep(seq_wt,
             run_squeeze: bool = True,
             run_pca: bool = False, 
             verbose: bool = True,
-            device=None,
+            device=None, 
             **kwargs):
     """
     Run the VEP pipeline on a sequence.
@@ -221,7 +223,8 @@ def run_vep(seq_wt,
         tokenizer: Tokenizer to use
         run_squeeze: If True, squeeze the output tensor
         run_pca: If True, run PCA on the tracks
-        verbose: If True, print verbose output
+        verbose: If True, print verbose output 
+
     Returns:
         dict: Dictionary containing the results
 
@@ -250,12 +253,12 @@ def run_vep(seq_wt,
                                 model=model, 
                                 tokenizer=tokenizer,
                                 run_squeeze=run_squeeze,
-                                device=device)    
-                                
+                                device=device)
+                          
     # Compute delta metrics
     results = compute_vep_metrics(trks_wt=trks_wt, 
-                                  trks_mut=trks_mut, 
-                                  verbose=verbose)
+                                 trks_mut=trks_mut, 
+                                 verbose=verbose)
     
     # Compute PCA metrics
     if run_pca:
@@ -264,7 +267,7 @@ def run_vep(seq_wt,
                                 trks_mut=trks_mut, 
                                 verbose=verbose)
                                 )
-    
+
     del trks_wt, trks_mut
     torch.cuda.empty_cache() 
 
@@ -272,16 +275,20 @@ def run_vep(seq_wt,
  
 
 def load_targets(species: List[str] = ["human","mouse"],
-                 top_n_tissues: int = 10):
+                 top_n_tissues: int = 10,
+                 return_paths: bool = False):
     """
     Load the targets (track names and metadata) for the Borzoi/Flashzoi models.
     Data source: https://github.com/calico/borzoi/tree/main/data
 
     Args:
         species: List of species to load (human, mouse)
+        top_n_tissues: Number of top tissues to load
+        return_paths: If True, return the paths to the targets files
     
     Returns:
         pd.DataFrame: DataFrame with track names and metadata
+        list: List of paths to the targets files
 
     Example:
         targets = load_targets()
@@ -303,20 +310,30 @@ def load_targets(species: List[str] = ["human","mouse"],
     }
     targets = []
     for species in species:
-        targets.append(pd.read_csv(
-            pooch.retrieve(paths[species]["path"],
-                known_hash=paths[species]["known_hash"]),
-            sep="\t",
-            index_col=0
-        ).assign(species=species)
-        )
+        path = pooch.retrieve(paths[species]["path"],
+                known_hash=paths[species]["known_hash"])
+        if return_paths:
+            targets.append(path)
+        else:
+            targets.append(pd.read_csv(
+                path,
+                sep="\t",
+                index_col=0
+            ).assign(species=species)
+            )
+    if return_paths:
+        return targets
+    
     targets = pd.concat(targets)
     targets["source"] = targets["file"].str.split("/").str[7]
     targets["assay"] = targets["description"].str.split(":").str[0]
-    targets["tissue"] = targets["description"].str.split(":",n=1).str[1]
+    targets["name"] = targets["description"].str.split(":",n=1).str[1].str.split(",").str[0]
     
-    top_tissues = targets["tissue"].value_counts().head(top_n_tissues).index
-    targets["top_tissue"] = targets["tissue"].apply(lambda x: x if x in top_tissues else "other")
+    # top_tissues = targets["tissue"].value_counts().head(top_n_tissues).index
+    # targets["top_tissue"] = targets["tissue"].apply(lambda x: x if x in top_tissues else "other")
+
+    # insert index column to keep track of index
+    targets = targets.reset_index().rename(columns={"index": "idx"})
     
     return targets
 

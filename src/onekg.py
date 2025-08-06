@@ -19,6 +19,7 @@ def get_chr_1kg(vcf_file,
     ftp_dict = get_ftp_dict()
     return os.path.basename(vcf_file).split(".")[-3]
 
+
 def list_remote_fasta(url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/phase3/20130502.phase3.analysis.sequence.index",
                        **kwargs):
     """
@@ -55,26 +56,22 @@ def get_ftp_dict():
         '1000_Genomes_30x_on_GRCh38':{
             'description': 'VCFs from high-coverage WGS with SNVs, INDELs, and SVs. Details: https://www.internationalgenome.org/data-portal/data-collection/30x-grch38',
             'url': "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/",
-            'merged_vcf':None,
             'manifest': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20220422_3202_phased_SNV_INDEL_SV/20220804_manifest.txt',
             'manifest_cols': ['fname', 'md5'],
             'manifest_sep': ' ',
             'pop': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/phase3/20131219.populations.tsv',
             'ped': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20200731.ALL.ped',
-            'ref': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa',
-            'chrom_idx': -3
+            'ref': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa'
         },
         '1000_Genomes_on_GRCh38':{
             'description': 'VCFs from low-coverage WGS with SNVs and INDELs. Details: https://www.internationalgenome.org/data-portal/data-collection/grch38',
             'url': "http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20190312_biallelic_SNV_and_INDEL/",
-            'merged_vcf':'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz',
             'manifest': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000_genomes_project/release/20190312_biallelic_SNV_and_INDEL/20190312_biallelic_SNV_and_INDEL_MANIFEST.txt',
             'manifest_cols': ['fname', 'size', 'md5'],
             'manifest_sep': '\t',
             'pop': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/phase3/20131219.populations.tsv',
             'ped': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/integrated_call_samples_v3.20200731.ALL.ped',
-            'ref': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa',
-            'chrom_idx': -3
+            'ref': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa'
         },
         'Human_Genome_Diversity_Project':{
             'description': 'VCFs from WGS with SNVs and INDELs. Details: https://www.internationalgenome.org/data-portal/data-collection/hgdp',
@@ -84,8 +81,7 @@ def get_ftp_dict():
             'manifest_sep': None,
             'pop': None,
             'ped': 'https://ngs.sanger.ac.uk/production/hgdp/hgdp_wgs.20190516/metadata/hgdp_wgs.20190516.metadata.txt',
-            'ref': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa',
-            'chrom_idx': -3
+            'ref': 'https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa'
         }
     }
 
@@ -137,20 +133,23 @@ def list_remote_vcf(key=DEFAULT_KEY,
                                header = None)
     if key == "1000_Genomes_on_GRCh38":
         manifest = manifest.loc[manifest['fname'].str.contains("ALL.chr")]
-        manifest.insert(0, "chrom", manifest["fname"].str.split(".").str[2])
-    
+        manifest.insert(0, "chrom", manifest["fname"].str.extract(r'(chr[0-9XYM]+)', expand=False))
+
+    elif key == "Human_Genome_Diversity_Project":
+        # Use regex to extract 'chr#' pattern from the filename for the chrom column
+        manifest.insert(0, "chrom", manifest["fname"].str.extract(r'(chr[0-9XYM]+)', expand=False))
     manifest['url'] = ftp+manifest['fname'].str.replace(r'^\./', '', regex=True)
     
     # Add key subdirectory if requested
     if add_key_subdir:
         # print(cache)
-        manifest['local'] = cache+manifest['fname'].str.replace(r'^\.', '', regex=True)
+        manifest['local'] = cache+"/"+manifest['fname'].str.replace(r'^\.', '', regex=True)
     
     manifest["key"] = key
 
     return manifest
 
-def download_vcfs(key=DEFAULT_KEY,
+def download_vcfs(key=None,
                   manifest=None,
                   skip_checks=False,
                   cache=None,
@@ -216,8 +215,7 @@ def download_vcfs(key=DEFAULT_KEY,
         return list(local_files.values())
 
 
-def get_pop(key=DEFAULT_KEY, 
-            drop_na_index=True):
+def get_pop(key=DEFAULT_KEY):
     """
     Retrieve population information from the 1000 Genomes Project.
     
@@ -238,8 +236,6 @@ def get_pop(key=DEFAULT_KEY,
         return None
     pops = pd.read_csv(url, sep="\t")
     pops.index = pops['Population Code'].tolist()
-    if drop_na_index:
-        pops = pops[pops.index.notna()]
     return pops
 
 def get_ped(key=DEFAULT_KEY):
@@ -273,7 +269,8 @@ def get_ped(key=DEFAULT_KEY):
                          'EUROPE':'EUR',
                          'AFRICA':'AFR',
                          'AMERICA':'AMR',
-                         'OCEANIA':'OCE'
+                         'OCEANIA':'OCE',
+                         'SOUTH_ASIA':'SAS'
                          }
         ped['superpopulation'] = ped['region'].map(superpop_dict)
 
@@ -283,7 +280,9 @@ def get_ped(key=DEFAULT_KEY):
     return ped
 
 def get_sample_metadata(key=DEFAULT_KEY,
-                        prohap_format=False):
+                        harmonized=True,
+                        prohap_format=False,
+                        ):
     """
     Retrieve and merge sample metadata from the 1000 Genomes Project.
     
@@ -304,26 +303,51 @@ def get_sample_metadata(key=DEFAULT_KEY,
         DataFrame containing merged sample metadata with individual information
         and population details.
     """
-    ped = get_ped(key=key)
-    
-    if key == 'Human_Genome_Diversity_Project':
-        if prohap_format:
-            ped.rename(columns={'Individual ID': 'Sample name',
-                                'sex': 'Sex',
-                                'population': 'Population code',
-                                'superpopulation': 'Superpopulation code'},
-                                inplace=True)
-        return ped
-    
-    pop = get_pop(key=key)
-    if ped is None or pop is None:
-        return None
-    sample_metadata = ped.merge(pop, left_on='Population', right_index=True)
+
+    if harmonized:
+        sample_metadata = pd.read_csv("metadata/igsr_samples.tsv", sep="\t")
+        sample_metadata = sample_metadata.rename(columns={"Sample name":"sample",
+                                                        "Population elastic ID":"population",
+                                                        "Population name":"population_name",
+                                                        "Superpopulation code":"superpopulation",
+                                                        "Superpopulation name":"superpopulation_name",
+                                                        "Sex":"sex"})
+        # Reassign non-standard superpopulation codes
+        sample_metadata.loc[sample_metadata['superpopulation']=="EUR,AFR", "superpopulation"] = "AFR"
+    else:
+        ped = get_ped(key=key)
+        
+        if key == 'Human_Genome_Diversity_Project':
+            if prohap_format:
+                ped.rename(columns={'Individual ID': 'Sample name',
+                                    'sex': 'Sex',
+                                    'population': 'Population code',
+                                    'superpopulation': 'Superpopulation code'},
+                                    inplace=True)
+            return ped
+        
+        pop = get_pop(key=key, )
+        if ped is None or pop is None:
+            return None
+        sample_metadata = ped.merge(pop, left_on='Population', right_index=True)
+   
+    # Convert to ProHap format
     if prohap_format:
+        if harmonized:
+            # The default 'Population code' has NAs
+            sample_metadata = sample_metadata.drop(['Population code'], axis=1)
+        
+        # Rename cols
         sample_metadata.rename(columns={'Individual ID': 'Sample name',
+                                        'sample': 'Sample name',
                                 'Gender': 'Sex',
+                                'sex': 'Sex', 
                                 'Population Code': 'Population code',
-                                'Super Population': 'Superpopulation code'},
+                                'population': 'Population code',
+                                'Population elastic ID': 'Population code',
+                                'Super Population': 'Superpopulation code',
+                                'superpopulation': 'Superpopulation code'
+                                },
                                 inplace=True)
     return sample_metadata
 

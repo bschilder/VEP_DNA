@@ -812,7 +812,8 @@ def get_genomic_complexity_msa(msa,
 
 
 def filter_region_to_site(region_to_site,
-                          site_filters=None):
+                          site_filters=None,
+                          verbose=True):
     """
     Filter the region_to_site to only include one region per site.
     This avoids unncessary iterations over multiple regions per site.
@@ -820,13 +821,15 @@ def filter_region_to_site(region_to_site,
 
     NOTE:
     sites_ds.sites contains all the sites provided to DatasetWithSites.
-    site_ds.rows contains all the sites provided to DatasetWithSites mapped onto each region in the BED file input to the GVL dataset, resulting in a many:many mapping between regions and sites
+    site_ds.rows contains all the sites provided to DatasetWithSites mapped onto each region in the BED file input to the GVL dataset, 
+        resulting in a many:many mapping between regions and sites
 
     Args:
         region_to_site (pl.DataFrame): A polars DataFrame with columns "region_idx" and "site_idx"
         site_filters (dict): A dictionary of site filters.
             Keys are column names and values are lists of values to filter on.
             Values can be lists, integers, or strings.
+        verbose (bool): Whether to print verbose output.
 
     Returns:
         pl.DataFrame: A polars DataFrame with one row per site
@@ -839,19 +842,38 @@ def filter_region_to_site(region_to_site,
         # 0          0        0
         # 1          1        1
     """ 
+    # print(region_to_site.to_pandas())
+    shape0 = region_to_site.shape 
+
+    region_to_site = (
+        region_to_site
+        .with_row_index()
+        .filter(pl.col("region_idx") == pl.col("site_idx")) 
+    )
+    
      # Filter the sites without affecting the structure of the GVL/xarray datasets
     if site_filters is not None:
         for fk, fv in site_filters.items():
+            if verbose>1:
+                print(f"Filtering {fk} with {fv}")
             if isinstance(fv, list):
                 region_to_site = region_to_site.filter(pl.col(fk).is_in(fv))
+            elif isinstance(fv, pd.core.arrays.string_.StringArray):
+                region_to_site = region_to_site.filter(pl.col(fk).is_in(list(fv)))
             elif isinstance(fv, int):
                 region_to_site = region_to_site.filter(pl.col(fk)>=fv)
             elif isinstance(fv, str):
                 region_to_site = region_to_site.filter(pl.col(fk).str.contains(fv)) 
+            else:
+                if verbose:
+                    print(f"Filtering with type {type(fv)} is not implemented") 
+                    
+    shape1 = region_to_site.shape 
 
-    region_to_site = (region_to_site
-            .select(pl.col("region_idx")==pl.col("site_idx"))
-            .with_row_index()
-            .filter(pl.col("region_idx")==True)
-            )  
+    # Report if no sites are left after filtering
+    if verbose or region_to_site.shape[0]==0:
+        print("Sites before filter_region_to_site: ", shape0)
+        print("Sites after site_filters: ", shape1)
+        print("Sites after region_idx==site_idx filter: ", region_to_site.shape)
+    
     return region_to_site

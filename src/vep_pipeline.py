@@ -154,6 +154,7 @@ def vep_pipeline(site_ds,
                  extra_samples=["REF"], 
                  site_filters=None,
                  device=None,
+                 return_raw=False,
                  verbose=True):
     """
     Run the VEP pipeline on a dataset.
@@ -181,6 +182,8 @@ def vep_pipeline(site_ds,
             If a value is a list, the site must be in the list.
             If a value is an int, the site must be greater than or equal to the value.
             If a value is a str, the site must contain the value.
+        return_raw (bool): If True, return the raw model predictions before computing VEP results.
+            For Flashzoi, this will return all track predictions for all individuals.
         verbose (bool): If True, print verbose output.
         device (str): Device to run the model on. 
     """ 
@@ -229,6 +232,11 @@ def vep_pipeline(site_ds,
     if device is None:
         device = utils.get_device() 
 
+    # Initialize raw results
+    if return_raw:
+        force = True # Force rerun for raw results
+        raw_results = {}
+
     # Iterate over models
     for model_name in tqdm(run_models, 
                            desc="Iterating over models",
@@ -244,16 +252,25 @@ def vep_pipeline(site_ds,
         else:
             model_max_seqs_per_batch = max_seqs_per_batch
 
-        if xarray_subset_notnull(xr_ds=xr_ds, 
+        if not force and xarray_subset_notnull(xr_ds=xr_ds, 
                                  model_name=model_name, 
                                  query=dict(slot=model_slots), 
-                                 method="all") and not force:
+                                 method="all") :
             if verbose:
                 print(f"Skipping {model_name}, because it it already filled with values")
                 print(f"To force rerun, set force=True")
             continue
 
-         
+        # Get a single region per site, centered on that site  
+        region_to_site = GVL.filter_region_to_site(region_to_site=site_ds.rows,
+                                                   site_filters=site_filters,
+                                                   verbose=verbose>1)
+        
+        if region_to_site.height == 0:
+            if verbose:
+                print(f"No sites found.")
+            continue
+    
         # Load the model
         model_name = model_name.lower()
         model = load_model(model_name, device=device, eval=True)  
@@ -261,25 +278,24 @@ def vep_pipeline(site_ds,
         # Load the tokenizer
         tokenizer = load_tokenizer(model_name) 
 
-        # Get a single region per site, centered on that site 
-        region_to_site = GVL.filter_region_to_site(region_to_site=site_ds.rows,
-                                                   site_filters=site_filters)
-        
-        if region_to_site.height == 0:
-            if verbose:
-                print(f"No sites found.")
-            continue
-        
         # Iterate over sites
+        site_count = 0 
         for row_idx in tqdm(region_to_site["index"],
                             desc="Iterating over sites",
                             disable=verbose<0,
                             leave=False):
+            
+            site_count += 1
         
             # Get site metadata
             site = site_ds.rows[row_idx]
+            # print(site_ds.rows.to_pandas())
             site_idx = site['site_idx'][0]
             site_name = site["name"][0] 
+
+            if 'name' in site_filters:
+                if site_name not in site_filters['name']:
+                    raise ValueError(f"Site {site_name} is not in the site_filters")
 
             # Check if the site is already filled with values for all samples
             if force:
@@ -295,12 +311,18 @@ def vep_pipeline(site_ds,
                         print(f"To force rerun, set force=True")
                     continue
 
+            # Limit samples to specific sample IDs
+            if isinstance(limit_samples, list):
+                samples_incomplete = [s for s in samples_incomplete if s in limit_samples]
+
             # Get batches
             batched_samples = utils.split_batches(samples=samples_incomplete, 
-                                                  max_seqs_per_batch=model_max_seqs_per_batch)  
+                                                  max_seqs_per_batch=model_max_seqs_per_batch) 
+            if len(batched_samples)==0:
+                raise ValueError(f"No samples to run for {model_name}, {site_name}")
 
             # --- Limit the number of sites for testing --- #
-            if limit_sites is not None and site_idx>limit_sites:
+            if limit_sites is not None and site_count>limit_sites:
                 break
             
             # Skip the first row in sites (WT)
@@ -308,7 +330,7 @@ def vep_pipeline(site_ds,
                 continue
 
             # Keep track of the number of samples processed
-            sample_count = 0
+            sample_count = 0 
 
             # Iterate over each sample
             for batch_idx, sample_names in tqdm(enumerate(batched_samples),
@@ -319,8 +341,9 @@ def vep_pipeline(site_ds,
                 
                 sample_count += len(sample_names)
                 # --- Limit the number of samples for testing --- #
-                if limit_samples is not None and sample_count>limit_samples:
-                    break 
+                if limit_samples is not None and isinstance(limit_samples, int):
+                    if sample_count>limit_samples:
+                        break 
 
                 # Check if the subset is null
                 if verbose>1:
@@ -401,9 +424,13 @@ def vep_pipeline(site_ds,
                               seq_mut=seq_mut,
                               verbose=verbose>1)
                 run_vep_end_time = time.time()
+                
+                if return_raw:  
+                    raw_results[(model_name,site_name,batch_idx)] = vep
+                    continue
 
                 # Empty the cache
-                # del seq_wt, seq_mut
+                del seq_wt, seq_mut
                 torch.cuda.empty_cache() 
 
                 if verbose>1:
@@ -455,7 +482,10 @@ def vep_pipeline(site_ds,
                                       verbose=verbose>1) 
 
     # Return the results as an xarray dataset
-    return xr_ds  
+    if return_raw:
+        return raw_results
+    else:
+        return xr_ds
 
 def _get_extra_slots():
     return ["time_total",
@@ -642,69 +672,117 @@ def update_xarray_dataset(ds,
         if verbose:
             print("No zarr path provided, skipping update")
 
-def run_vep(model_name, 
-            seq_wt, 
-            seq_mut,
-            model=None, 
-            tokenizer=None, 
-            device=None,
-            verbose=True,
-            **kwargs):
+def run_vep(
+    model_name, 
+    seq_wt, 
+    seq_mut,
+    model=None, 
+    tokenizer=None, 
+    device=None, 
+    verbose=True,
+    **kwargs
+):
     """
-    Run the VEP pipeline for a given model.
+    Run the Variant Effect Prediction (VEP) pipeline for a specified model.
+
+    This function dispatches to the appropriate model-specific VEP implementation
+    based on the provided `model_name`. It supports multiple models, including
+    SpliceAI, SpliceAI MultiMolecule, Flashzoi, Evo2, and DNABERT2.
+
+    Parameters
+    ----------
+    model_name : str
+        The name of the model to use. Supported values include:
+        "spliceai", "spliceai_mm", "flashzoi", any string starting with "evo2", and "dnabert2".
+    seq_wt : str
+        The wild-type (reference) sequence.
+    seq_mut : str
+        The mutant (alternate) sequence.
+    model : object, optional
+        The pre-loaded model object to use. If None, the model will be loaded internally.
+    tokenizer : object, optional
+        The tokenizer to use for sequence encoding. If None, the tokenizer will be loaded internally.
+    device : str or torch.device, optional
+        The device to run the model on (e.g., "cpu" or "cuda"). If None, the default device is used.
+    verbose : bool, default True
+        If True, print verbose output during execution.
+    **kwargs
+        Additional keyword arguments passed to the underlying model-specific VEP function.
+
+    Returns
+    -------
+    dict or np.ndarray
+        The results of the VEP pipeline. The structure of the output depends on the model and
+        the value of `return_raw`.
+
+    Raises
+    ------
+    ValueError
+        If the specified `model_name` is not recognized.
+
+    Examples
+    --------
+    >>> run_vep("spliceai", seq_wt="ATGC", seq_mut="ATGT")
+    >>> run_vep("flashzoi", seq_wt="ATGC", seq_mut="ATGT", return_raw=True)
     """
     if model_name == "spliceai":
         from src.spliceai import run_vep as _run_vep
-        return _run_vep(model=model, 
-                        tokenizer=tokenizer, 
-                        seq_wt=seq_wt, 
-                        seq_mut=seq_mut,
-                        device=device,
-                        verbose=verbose,
-                        **kwargs)
-    
+        return _run_vep(
+            model=model, 
+            tokenizer=tokenizer, 
+            seq_wt=seq_wt, 
+            seq_mut=seq_mut,
+            device=device,
+            verbose=verbose,
+            **kwargs
+        )
     elif model_name == "spliceai_mm":
         from src.spliceai_multimolecule import run_vep as _run_vep
-        return _run_vep(model=model, 
-                        tokenizer=tokenizer, 
-                        seq_wt=seq_wt, 
-                        seq_mut=seq_mut,    
-                        device=device,
-                        verbose=verbose,
-                        **kwargs)
-    
+        return _run_vep(
+            model=model, 
+            tokenizer=tokenizer, 
+            seq_wt=seq_wt, 
+            seq_mut=seq_mut,    
+            device=device,
+            verbose=verbose,
+            **kwargs
+        )
     elif model_name == "flashzoi":
         from src.flashzoi import run_vep as _run_vep
-        return _run_vep(model=model, 
-                        tokenizer=tokenizer, 
-                        seq_wt=seq_wt, 
-                        seq_mut=seq_mut,
-                        device=device,
-                        verbose=verbose,
-                        **kwargs)
-    
+        return _run_vep(
+            model=model, 
+            tokenizer=tokenizer, 
+            seq_wt=seq_wt, 
+            seq_mut=seq_mut,
+            device=device, 
+            verbose=verbose,
+            **kwargs
+        )
     elif model_name.startswith("evo2"):
         from src.evo2 import run_vep as _run_vep
-        return _run_vep(model=model, 
-                        tokenizer=tokenizer, 
-                        seq_wt=seq_wt, 
-                        seq_mut=seq_mut,
-                        device=device,
-                        verbose=verbose,
-                        **kwargs)
-    
+        return _run_vep(
+            model=model, 
+            tokenizer=tokenizer, 
+            seq_wt=seq_wt, 
+            seq_mut=seq_mut,
+            device=device,
+            verbose=verbose,
+            **kwargs
+        )
     elif model_name == "dnabert2":
         from src.dnabert2 import run_vep as _run_vep
-        return _run_vep(model=model, 
-                        tokenizer=tokenizer, 
-                        seq_wt=seq_wt, 
-                        seq_mut=seq_mut,
-                        device=device,
-                        verbose=verbose,
-                        **kwargs)
-    
+        return _run_vep(
+            model=model, 
+            tokenizer=tokenizer, 
+            seq_wt=seq_wt, 
+            seq_mut=seq_mut,
+            device=device,
+            verbose=verbose,
+            **kwargs
+        )
     else:
-        raise ValueError(f"Model {model_name} not found")
+        raise ValueError(f"Model {model_name} not found") 
+
 
 def load_model(model_name,
                 device=None,
@@ -775,6 +853,7 @@ def vep_pipeline_onekg(bed,
                         reverse_chroms = True,
                         verbose = True, 
                         checkpoint_frequency = "site", 
+                        return_raw = False,
                         device = "cuda"):
     """
     Run the VEP pipeline for the 1000 Genomes project.
@@ -820,6 +899,8 @@ def vep_pipeline_onekg(bed,
             "mps": Run on the MPS.
             "auto": Run on the best available device.
             If None, the device will be determined by the model name according to get_device().
+        return_raw (bool): If True, return the raw model predictions before computing VEP results.
+            For Flashzoi, this will return all track predictions for all individuals.
         verbose (bool): Whether to print verbose output.
 
     Returns:
@@ -847,6 +928,15 @@ def vep_pipeline_onekg(bed,
         limit_chroms = [str(chrom).replace("chr", "") for chrom in limit_chroms]
         chroms = [chrom for chrom in chroms if chrom.replace("chr", "") in limit_chroms]
         limit_chroms = None
+
+    # Only iterate over chromosomes that have variants
+    chroms = [chrom for chrom in chroms if chrom.replace("chr", "") in bed["chrom"].unique().str.replace("chr", "").to_list()]
+    if len(chroms)==0:
+        raise ValueError("No chromosomes found in the BED file")
+    
+    # Initialize raw results dictionary
+    if return_raw:
+        raw_results = {}
 
     # Iterate over chromosomes
     for chrom in tqdm(chroms[:limit_chroms],
@@ -915,10 +1005,24 @@ def vep_pipeline_onekg(bed,
                              checkpoint_frequency=checkpoint_frequency,
                              site_filters=site_filters,
                              device=device,
-                             verbose=verbose
+                             verbose=verbose,
+                             return_raw=return_raw
                              )
-        
-    return xr_ds
+        if return_raw:
+            raw_results[chrom] = {} # Initialize the dictionary for the chromosome
+            raw_results[chrom]['results'] = xr_ds
+            raw_results[chrom]['reference'] = reference
+            raw_results[chrom]['vcf'] = vcf_paths
+            raw_results[chrom]['bed'] = bed_chrom
+            raw_results[chrom]['sites_chrom'] = sites_chrom
+            raw_results[chrom]['site_ds'] = site_ds 
+            raw_results[chrom]['ds'] = ds
+    
+    # Return raw results if requested
+    if return_raw:
+        return raw_results
+    else:
+        return xr_ds
 
 def load_vep_results(xr_ds_path, 
                      notnull=True, 
@@ -957,28 +1061,57 @@ def load_vep_results(xr_ds_path,
         return df
     return xr_ds
 
-def load_vep_results_mfdataset(xr_mfds_dir,
-                               suffix="*.zarr",
-                               concat_dim="sample",
-                               combine="nested",
-                               preprocess=None, # lambda x: x.where(x.notnull()).sel(slot="COVR")
-                               dropna_subset=None,
-                               **kwargs):
+def load_vep_results_mfdataset(
+    xr_mfds_dir,
+    suffix="*.zarr",
+    concat_dim="sample",
+    combine="nested",
+    preprocess=None,
+    dropna_subset=None,
+    columns=None,
+    chunks="auto",
+    **kwargs
+):
     """
-    Load the VEP results from a directory of multiple zarr files.
-    """ 
-    
+    Load the VEP results from a directory of multiple zarr files, much faster by chunked reading and minimal memory use.
+    Returns a DataFrame.
+    """
+    import dask.dataframe as dd
+    import xarray as xr
+    import glob
+    import os
+
     xr_mfds_paths = glob.glob(os.path.join(xr_mfds_dir, suffix))
-    mfds = xr.open_mfdataset(paths=xr_mfds_paths, 
-                            concat_dim=concat_dim,
-                            combine=combine,
-                            preprocess=preprocess,
-                            **kwargs
-                    ) 
-    mfds_df = mfds.to_dataframe().reset_index()
+    if not xr_mfds_paths:
+        raise FileNotFoundError(f"No files found in {xr_mfds_dir} with suffix {suffix}")
+
+    # Open as a dask-backed xarray dataset for lazy loading
+    mfds = xr.open_mfdataset(
+        paths=xr_mfds_paths,
+        concat_dim=concat_dim,
+        combine=combine,
+        preprocess=preprocess,
+        chunks=chunks,
+        **kwargs
+    )
+
+    # Only load the columns we need, if specified
+    if columns is not None:
+        missing = [col for col in columns if col not in mfds.variables and col not in mfds.coords]
+        if missing:
+            raise ValueError(f"Columns not found in dataset: {missing}")
+        mfds = mfds[columns]
+
+    # Convert to dask dataframe for fast filtering and conversion
+    ddf = mfds.to_dask_dataframe().reset_index()
+
     if dropna_subset is not None:
-        mfds_df = mfds_df.dropna(subset=dropna_subset) 
-    return mfds_df
+        ddf = ddf.dropna(subset=dropna_subset)
+
+    # Compute only the filtered result, not the whole dataset
+    df = ddf.compute()
+
+    return df
 
 def get_all_samples(site_ds):
     """
@@ -999,3 +1132,82 @@ def get_all_sites(site_ds):
     Get all sites from a site_ds.
     """
     return site_ds.rows["name"].unique().to_list()
+
+
+def get_middle_n(arr, n):
+    # arr: torch.Tensor or np.ndarray
+    last_dim = arr.shape[-1]
+    if n is None or n >= last_dim:
+        return arr
+    start = (last_dim - n) // 2
+    end = start + n
+    if hasattr(arr, "narrow"):  # torch.Tensor
+        return arr.narrow(-1, start, n)
+    else:  # np.ndarray
+        slicer = [slice(None)] * (arr.ndim - 1) + [slice(start, end)]
+        return arr[tuple(slicer)]
+
+
+
+def raw_results_to_site_results(
+    raw_results, 
+    key="delta",
+    use_torch=True,
+    middle_n=None
+):
+    """
+    Convert raw results to site results.
+
+    This function aggregates the specified metric (default: "delta") from the raw results
+    dictionary (generated by `vep_pipeline_onekg(return_raw=True)`), which is organized by chromosome. For each site, it collects all metric arrays
+    across chromosomes and batches, and concatenates them into a single array per site.
+
+    Args:
+        raw_results (dict): Dictionary of raw results, keyed by chromosome. Each value is a dict
+            with keys (model_name, site_name, batch_idx) and values that are dicts containing
+            metrics (e.g., "delta").
+        key (str, optional): The metric to extract and aggregate for each site. Defaults to "delta".
+        use_torch (bool, optional): Whether to use torch tensors. Defaults to True.
+        middle_n (int, optional): If set, only return the middle N elements along the last dimension
+            of the metric array for each site.
+
+    Returns:
+        dict: Dictionary mapping site names to concatenated arrays of the specified metric.
+    """
+
+    if use_torch:
+        import torch
+        site_results = {} 
+        for chr, rr in raw_results.items():
+            for (model_name, site_name, batch_idx), val in tqdm(rr['results'].items(), 
+                                                                desc=f"Extracting variants in chr {chr}"):
+                delta = val[key]
+                if not torch.is_tensor(delta):
+                    delta = torch.from_numpy(delta).cpu()
+                else:
+                    delta = delta.cpu()
+                if middle_n is not None:
+                    delta = get_middle_n(delta, middle_n)
+                if site_name not in site_results:
+                    site_results[site_name] = []
+                site_results[site_name].append(delta)
+
+        for site_name, deltas in tqdm(site_results.items(), desc="Concatenating results (CPU)"):
+            site_results[site_name] = torch.cat(deltas, dim=0)
+
+    else: 
+        site_results = {}
+        for chr, rr in raw_results.items():
+            for result_key, val in tqdm(rr['results'].items(), desc=f"Extracting variants in chr {chr}"):
+                model_name, site_name, batch_idx = result_key
+                metric_array = val[key]
+                if middle_n is not None:
+                    metric_array = get_middle_n(metric_array, middle_n)
+                if site_name not in site_results:
+                    site_results[site_name] = []
+                site_results[site_name].append(metric_array)
+
+        for site_name, metric_list in tqdm(site_results.items(), desc="Concatenating results"):
+            site_results[site_name] = np.concatenate(metric_list, axis=0)
+
+    return site_results

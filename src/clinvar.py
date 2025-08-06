@@ -48,16 +48,57 @@ def download_vcf(vcf_url = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/
                               progressbar=True)
     return {"vcf": vcf_file, "idx": idx_file}
 
+def vcf_to_df(
+    vcf_file=None,
+    attrs=["CHROM", "POS", "ID", "REF", "ALT"],
+    filter=None,  # e.g., lambda v: "UTR" in v.INFO.get("MC", "")
+    contig=None,
+    info=INFO_COLS_SELECT,
+    extract_ids=True,
+    progress=True,
+    cache=os.path.join(pooch.os_cache("pooch"), "clinvar.parquet"),
+    force=False
+):
+    """
+    Convert a ClinVar VCF file to a Polars DataFrame with selected annotations.
 
-def vcf_to_df(vcf_file=None,
-              filter=None,#lambda v: "UTR" in v.INFO.get("MC", ""),
-              contig=None,
-               info = INFO_COLS_SELECT,
-               extract_ids=True,
-               progress=True,
-               cache=os.path.join(pooch.os_cache("pooch"),"clinvar.parquet"),
-               force=False
-            ):
+    This function reads a ClinVar VCF file, extracts specified attributes and INFO fields,
+    processes key annotation columns, and returns a Polars DataFrame. It supports caching
+    to avoid repeated parsing and can extract additional ID columns if requested.
+
+    Parameters
+    ----------
+    vcf_file : str or None, optional
+        Path to the ClinVar VCF file. If None, downloads the latest ClinVar VCF.
+    attrs : list of str, default=["CHROM", "POS", "ID", "REF", "ALT"]
+        List of VCF record attributes to extract as columns.
+    filter : callable or None, optional
+        Optional filter function to select VCF records (e.g., lambda v: ...).
+    contig : str or None, optional
+        If specified, only extract records from this contig/chromosome.
+    info : list of str, default=INFO_COLS_SELECT
+        List of INFO field keys to extract from the VCF.
+    extract_ids : bool, default=True
+        Whether to extract additional ID columns using _extract_id_cols.
+    progress : bool, default=True
+        Whether to display a progress bar during parsing.
+    cache : str, default=os.path.join(pooch.os_cache("pooch"),"clinvar.parquet")
+        Path to cache the resulting DataFrame as a parquet file.
+    force : bool, default=False
+        If True, force re-parsing even if cache exists.
+
+    Returns
+    -------
+    pl.DataFrame
+        Polars DataFrame containing the extracted VCF records and annotations.
+
+    Notes
+    -----
+    - The function will cache the parsed DataFrame to disk for faster future access.
+    - The "MC" (Molecular Consequence) field is split into "MC_id" and "MC_term".
+    - The "CLNREVSTAT" field is mapped to a numeric "CLNREVSTAT_score" for review status.
+    - If `extract_ids` is True, additional ID columns are extracted using _extract_id_cols.
+    """
     from genoray import VCF
 
     if vcf_file is None:
@@ -66,22 +107,24 @@ def vcf_to_df(vcf_file=None,
     if os.path.exists(cache) and not force:
         print(f"Reading from {cache}")
         return pl.read_parquet(cache)
-    
-    vcf = VCF(vcf_file, 
-              filter=filter)
 
-    # annotation keys to extract from the INFO field
-   
-    vcf_df = vcf.get_record_info(contig=contig,
-                                attrs=["CHROM", "POS", "REF", "ALT"], 
-                                info=info,
-                                progress=progress)
-    # Get the Molecular Consequence (MC) Sequence Ontology (SO) IDs and term names
+    vcf = VCF(vcf_file, filter=filter)
+
+    # Extract record attributes and INFO fields
+    vcf_df = vcf.get_record_info(
+        contig=contig,
+        attrs=attrs,
+        info=info,
+        progress=progress
+    )
+
+    # Parse Molecular Consequence (MC) into SO ID and term
     vcf_df = vcf_df.with_columns(
         vcf_df["MC"].str.split("|").list.first().alias("MC_id"),
         vcf_df["MC"].str.split("|").list.last().alias("MC_term")
     )
-    # Create a mapping dictionary for review status scores
+
+    # Map review status to numeric score
     review_score_map = {
         "practice_guideline": 4,
         "reviewed_by_expert_panel": 3,
@@ -93,18 +136,18 @@ def vcf_to_df(vcf_file=None,
         "no_classification_for_the_single_variant": 0,
         "no_classifications_from_unflagged_records": 0
     }
-
-    # Create new column using the mapping dictionary
     vcf_df = vcf_df.with_columns(
         pl.col("CLNREVSTAT").replace(review_score_map).alias("CLNREVSTAT_score").cast(pl.Int8)
     )
+
+    # Optionally extract additional ID columns
     if extract_ids:
         vcf_df = _extract_id_cols(vcf_df)
-    
+
     print(f"Caching to {cache}")
     vcf_df.write_parquet(cache)
 
-    return vcf_df 
+    return vcf_df
 
 
 def simplify_annotations(bed,
@@ -427,6 +470,7 @@ def read_bed(path,
              separator='\t',
              simplify=True,
              extract_ids=True,
+             as_pandas=False,
              **kwargs):
     """
     Read a BED file created by the clinvar submodule for use with GenVarloader.
@@ -467,6 +511,9 @@ def read_bed(path,
 
     if simplify:
         bed = simplify_annotations(bed)
+
+    if as_pandas:
+        bed = bed.to_pandas()
 
     return bed
 
