@@ -223,10 +223,12 @@ def vep_pipeline(site_ds,
     
     # Gather metadata: ploidy
     all_ploid = xr_ds.coords["ploid"].values.tolist()
+    # Get the models to run
     if all_models is None:
         all_models = list(xr_ds.data_vars.keys())
+    run_models = utils.as_list(run_models)
     if run_models is None:
-        run_models = all_models  
+        run_models = all_models   
 
     # Get the device
     if device is None:

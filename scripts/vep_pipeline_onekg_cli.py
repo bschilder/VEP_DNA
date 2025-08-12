@@ -12,9 +12,12 @@ import os
 import polars as pl
 from pathlib import Path
 
+# Add the project root directory to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Import the VEP pipeline functions
 from src.vep_pipeline import vep_pipeline_onekg, get_model_to_batchsize_map, get_model_to_metric_map
-
+import src.clinvar as cv
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -127,7 +130,7 @@ def parse_arguments():
     parser.add_argument(
         "--device",
         default="cuda",
-        choices=["cpu", "cuda", "mps", "auto"],
+        # Accept any string, validate later to allow "cuda:#" (e.g., "cuda:0")
         help="Device to run on"
     )
     
@@ -159,32 +162,7 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def load_bed_file(bed_path):
-    """Load and validate BED file."""
-    if not os.path.exists(bed_path):
-        raise FileNotFoundError(f"BED file not found: {bed_path}")
-    
-    try:
-        bed_df = pl.read_csv(bed_path, separator="\t", has_header=False)
-        # Ensure we have at least 3 columns for BED format
-        if bed_df.shape[1] < 3:
-            raise ValueError("BED file must have at least 3 columns (chrom, start, end)")
-        
-        # Rename columns to standard BED format
-        if bed_df.shape[1] >= 3:
-            bed_df = bed_df.select([
-                pl.col("column_1").alias("chrom"),
-                pl.col("column_2").alias("start"),
-                pl.col("column_3").alias("end")
-            ])
-        
-        print(f"Loaded BED file with {bed_df.height} variants")
-        return bed_df
-        
-    except Exception as e:
-        raise ValueError(f"Error loading BED file: {e}")
-
-
+ 
 def main():
     """Main function to run the VEP pipeline."""
     args = parse_arguments()
@@ -206,7 +184,7 @@ def main():
     
     # Load BED file
     print(f"Loading BED file: {args.bed}")
-    bed_df = load_bed_file(args.bed)
+    bed = cv.read_bed(args.bed)
     
     # Convert limit_chroms to appropriate format
     limit_chroms = args.limit_chroms
@@ -218,7 +196,7 @@ def main():
     
     # Prepare arguments for vep_pipeline_onekg
     pipeline_args = {
-        'bed': bed_df,
+        'bed': bed,
         'cohort': args.cohort,
         'variant_set': args.variant_set,
         'run_models': args.run_models,

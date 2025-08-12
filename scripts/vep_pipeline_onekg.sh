@@ -32,13 +32,13 @@ CHROM=${CHROMS[$ARRAY_INDEX]}
 echo "Running for chromosome: $CHROM (array index: $ARRAY_INDEX)"
 
 # Load modules or activate conda environment 
-module load EBH100 CUDA/12.6.0 # GCC
-source /grid/koo/home/schilder/.bashrc
+module load EBH100 CUDA/12.6.0
+source $HOME/.bashrc
 conda_init
 conda activate flashzoi
 
 # Navigate to your project directory
-REPO_DIR=/grid/koo/home/schilder/projects/VEP_DNA
+REPO_DIR=$HOME/projects/VEP_DNA
 cd $REPO_DIR/notebooks
 
 # Make the training scripts executable
