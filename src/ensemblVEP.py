@@ -413,7 +413,7 @@ def run_correlation_analysis(vep_annot,
                              ref_vs_all=False,
                              method="spearman",
                              transform=None,
-                             transform_kwargs=None,
+                             transform_kwargs={},
                              leave=False,
                              verbose=True):
     """
@@ -563,7 +563,7 @@ def run_correlation_analysis(vep_annot,
 
 
 def plot_correlation_analysis(r2_df,
-                              x_var="r_diff",
+                              x_var="r2_diff",
                               y_var="annotation",
                               figsize=(6, 7),
                               ylabel="Annotation",

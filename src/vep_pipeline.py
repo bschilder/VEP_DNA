@@ -426,6 +426,8 @@ def vep_pipeline(site_ds,
                 run_vep_end_time = time.time()
                 
                 if return_raw:  
+                    # Duplicates samples (2 haplotypes per sample)
+                    vep["samples"] = np.repeat(sample_names, 2)
                     raw_results[(model_name,site_name,batch_idx)] = vep
                     continue
 
@@ -1198,8 +1200,8 @@ def raw_results_to_site_results(
     else: 
         site_results = {}
         for chr, rr in raw_results.items():
-            for result_key, val in tqdm(rr['results'].items(), desc=f"Extracting variants in chr {chr}"):
-                model_name, site_name, batch_idx = result_key
+            for (model_name, site_name, batch_idx), val in tqdm(rr['results'].items(), 
+                                                                desc=f"Extracting variants in chr {chr}"):
                 metric_array = val[key]
                 if middle_n is not None:
                     metric_array = get_middle_n(metric_array, middle_n)
