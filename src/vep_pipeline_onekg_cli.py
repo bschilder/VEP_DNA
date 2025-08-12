@@ -11,10 +11,16 @@ import sys
 import os
 import polars as pl
 from pathlib import Path
- 
+
+# Ensure the src directory is in the Python path
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.join(SCRIPT_DIR, "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
 # Import the VEP pipeline functions
-from src.vep_pipeline import vep_pipeline_onekg, get_model_to_batchsize_map, get_model_to_metric_map
-import src.clinvar as cv
+from vep_pipeline import vep_pipeline_onekg, get_model_to_batchsize_map, get_model_to_metric_map
+import clinvar as cv
 
 def parse_arguments():
     """Parse command line arguments."""
