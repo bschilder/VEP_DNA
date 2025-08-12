@@ -6,11 +6,18 @@ dependencies:
   - python>=3.10,<3.13
   - pooch
   - scikit-learn
-  # - bioconda::pgenlib # Optional
-  # - xarray # Optional
-  # - zarr # Optional
+  ## Necessary for Elzar HPC
+  - gcc
+  - libgcc
+  - libstdcxx-ng
+  # Optional
+  - bioconda::pgenlib # Optional
+  - xarray # Optional
+  - zarr # Optional
+  - dask # Optional
   - pip
   - pip:
+      - genvarloader
       # - git+https://github.com/mcvickerlab/GenVarLoader.git # Optional
       - borzoi-pytorch
       - ipykernel
