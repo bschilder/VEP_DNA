@@ -11,10 +11,7 @@ import sys
 import os
 import polars as pl
 from pathlib import Path
-
-# Add the project root directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+ 
 # Import the VEP pipeline functions
 from src.vep_pipeline import vep_pipeline_onekg, get_model_to_batchsize_map, get_model_to_metric_map
 import src.clinvar as cv

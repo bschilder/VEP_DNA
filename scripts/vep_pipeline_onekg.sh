@@ -42,12 +42,12 @@ REPO_DIR=$HOME/projects/VEP_DNA
 cd $REPO_DIR/notebooks
 
 # Make the scripts executable 
-chmod 777 $REPO_DIR/scripts/*
+chmod 777 $REPO_DIR/src/*
 
 # Run the training script with command line arguments
 # You can modify these arguments as needed
 echo "Running VEP pipeline..."
-srun python $REPO_DIR/scripts/vep_pipeline_onekg_cli.py \
+srun python $REPO_DIR/src/vep_pipeline_onekg_cli.py \
 	--bed $REPO_DIR/data/UTR/clinvar_utr_snv.bed.gz \
 	--cohort 1000_Genomes_on_GRCh38 \
 	--variant-set clinvar_utr_snv \
