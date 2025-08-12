@@ -152,7 +152,7 @@ def vep_pipeline(site_ds,
                  force=False,
                  checkpoint_frequency="site",
                  extra_samples=["REF"], 
-                 site_filters=None,
+                 site_filters={},
                  device=None,
                  return_raw=False,
                  verbose=True):
@@ -432,6 +432,8 @@ def vep_pipeline(site_ds,
                     continue
 
                 # Empty the cache
+                len_seq_slots = {"len_seq_wt":seq_wt.shape[-1],
+                               "len_seq_mut":seq_mut.shape[-1]}
                 del seq_wt, seq_mut
                 torch.cuda.empty_cache() 
 
@@ -458,9 +460,8 @@ def vep_pipeline(site_ds,
                 extra_slots = {"time_total":(time.time()-start_time)/len(sample_names)/len(all_ploid)/2,
                                 "time_run_vep":(run_vep_end_time-run_vep_start_time)/len(sample_names)/len(all_ploid)/2,
                             #    "timestamp":time.strftime("%Y-%m-%d %H:%M:%S"),
-                                "output_length":site_ds.dataset.output_length,
-                                "len_seq_wt":seq_wt.shape[-1],
-                                "len_seq_mut":seq_mut.shape[-1]}
+                                "output_length":site_ds.dataset.output_length}
+                extra_slots.update(len_seq_slots)
                 
                 # Add the extra slots to the dataset
                 for k,v in extra_slots.items():
@@ -843,7 +844,7 @@ def vep_pipeline_onekg(bed,
                         run_models = None,
                         all_models = None,
                         results_dir = None,
-                        site_filters=None,
+                        site_filters={},
                         window_len = 2**19,
                         max_seqs_per_batch=None,
                         limit_regions = None,
@@ -926,6 +927,7 @@ def vep_pipeline_onekg(bed,
     if reverse_chroms:
         chroms.reverse()
 
+    limit_chroms = utils.as_list(limit_chroms)
     if isinstance(limit_chroms, list):
         limit_chroms = [str(chrom).replace("chr", "") for chrom in limit_chroms]
         chroms = [chrom for chrom in chroms if chrom.replace("chr", "") in limit_chroms]

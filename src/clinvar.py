@@ -506,6 +506,10 @@ def read_bed(path,
         **kwargs
     ).drop_nulls(subset=['ALT'])
 
+    bed = bed.with_columns(
+        pl.col("name").alias("site")
+    )
+
     if extract_ids:
         bed = _extract_id_cols(bed)
 

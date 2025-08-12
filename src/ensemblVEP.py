@@ -11,282 +11,178 @@ import matplotlib.pyplot as plt
 
 import src.utils as utils
 
-ANNOT_COLS  = [
-    #### CADD ####
-    "CADD_PHRED",
-    "CADD_RAW",
+# Categories:
+# - pathogenicity
+# - splicing 
+# - protein
+# - conservation
+# - MPRA
+# - population genetics
+# - regulatory
+# - gene constraint
+# - clinical
+# - other
 
-    #### REVEL ####
-    "REVEL",
+ANNOT_DICT = {
+    # Pathogenicity predictors
+    "CADD_PHRED": "pathogenicity",
+    "CADD_RAW": "pathogenicity",
+    "ClinPred": "pathogenicity", 
+    "BayesDel_addAF_score": "pathogenicity",
+    "BayesDel_noAF_score": "pathogenicity",
+    "DANN_score": "pathogenicity",
+    "Eigen-PC-phred_coding": "pathogenicity",
+    "Eigen-PC-raw_coding": "pathogenicity",
+    "Eigen-phred_coding": "pathogenicity",
+    "Eigen-raw_coding": "pathogenicity",
+    "MPC_score": "pathogenicity",
+    "MetaLR_score": "pathogenicity",
+    "MetaRNN_score": "pathogenicity",
+    "MetaSVM_score": "pathogenicity",
+    "MutationTaster_converted_rankscore": "pathogenicity",
+    "Reliability_index": "pathogenicity",
 
-    #### MaveDB ####
-    "MaveDB_score_mean", 
-    "MaveDB_score_abs_mean",
-#    "MaveDB_score_min",
-#    "MaveDB_score_max",
- 
-    #### EVE ####
-    "EVE_SCORE",
-    
-    #### ClinPred ####
-    "ClinPred",
+    # Splicing
+    "rf_score": "splicing",
+    "ada_score": "splicing",
+    "MaxEntScan_ref": "splicing",
+    "MaxEntScan_alt": "splicing",
+    "MaxEntScan_diff": "splicing",
+    "SpliceAI_pred_DP_AG": "splicing",
+    "SpliceAI_pred_DP_AL": "splicing",
+    "SpliceAI_pred_DP_DG": "splicing",
+    "SpliceAI_pred_DP_DL": "splicing",
+    "SpliceAI_pred_DS_AG": "splicing",
+    "SpliceAI_pred_DS_AL": "splicing",
+    "SpliceAI_pred_DS_DG": "splicing",
+    "SpliceAI_pred_DS_DL": "splicing",
 
-    #### RF ####
-    #  Likelihood of a splice-site variant being pathogenic. 
-    "rf_score",
+    # Protein 
 
-    #### AdaScore ####
-    #  Probability of a splice-site variant being pathogenic. 
-    "ada_score",
+    "gMVP_score": "protein",
+    "fathmm-XF_coding_score": "protein",
+    "PROVEAN_converted_rankscore": "protein",
+    "PROVEAN_pred": "protein",
+    "PROVEAN_score": "protein",
+    "MutationAssessor_score": "protein",
+    "MVP_score": "protein",
+    "LIST-S2_score": "protein",
+    "VARITY_ER_LOO_score": "protein",
+    "VARITY_ER_score": "protein",
+    "VARITY_R_LOO_score": "protein",
+    "VARITY_R_score": "protein",
+    "DEOGEN2_score": "protein",
+    "PrimateAI_pred": "protein",
+    "PrimateAI_score": "protein",
+    "MutFormer_score": "protein",
+    "ESM1b_score": "protein",
+    "REVEL": "protein",
+    "EVE_SCORE": "protein",
+    "am_pathogenicity": "protein",
+    "SIFT_score": "protein",
+    "PolyPhen_score": "protein",
+    "BLOSUM62": "protein",
+    "MOTIF_SCORE_CHANGE": "protein",
+    "mutfunc_exp": "protein",
+    "mutfunc_int": "protein",
+    "mutfunc_mod": "protein",
+    "mutfunc_motif": "protein",
 
-    #### MaxEntScan ####
-    'MaxEntScan_ref',   
-    'MaxEntScan_alt',
-    'MaxEntScan_diff',
-    
-    #### LOEUF ####
-    "LOEUF",
-    
-    #### AlphaMissense ####
-    "am_pathogenicity",
-    # "AlphaMissense_rankscore"  # commented out, _score is not available, so keep if needed
+    # Conservation
+    "GERP++_NR": "conservation",
+    "GERP++_RS": "conservation",
+    "GERP_91_mammals": "conservation",
+    "phastCons100way_vertebrate": "conservation",
+    "phastCons17way_primate": "conservation",
+    "phastCons470way_mammalian": "conservation",
+    "phyloP100way_vertebrate": "conservation",
+    "phyloP17way_primate": "conservation",
+    "phyloP470way_mammalian": "conservation",
 
-    ### SpliceAI ####
-    'SpliceAI_pred_DP_AG',
-    'SpliceAI_pred_DP_AL',
-    'SpliceAI_pred_DP_DG',
-    'SpliceAI_pred_DP_DL',
-    'SpliceAI_pred_DS_AG',
-    'SpliceAI_pred_DS_AL',
-    'SpliceAI_pred_DS_DG',
-    'SpliceAI_pred_DS_DL',
-    
-    #### OpenTargets ####
-   "OpenTargets_l2g",
+    # MPRA/experimental
+    "MaveDB_score_mean": "MPRA",
+    "MaveDB_score_abs_mean": "MPRA",
+    # "MaveDB_score_min": "MPRA",
+    # "MaveDB_score_max": "MPRA",
 
+    # Regulatory
+    "OpenTargets_l2g": "regulatory",
+    "Enformer_SAD": "regulatory",
+    "Enformer_SAR": "regulatory",
 
-    #### Allele Frequences ####
-    'AF',
-    'AFR_AF',
-    'AMR_AF',
-    'EAS_AF',
-    'EUR_AF',
-    'SAS_AF',
-    
-    #### gnomAD ####     
-    'gnomADe_AF',
-    'gnomADe_AFR_AF',
-    'gnomADe_AMR_AF',
-    'gnomADe_ASJ_AF',
-    'gnomADe_EAS_AF',
-    'gnomADe_FIN_AF',
-    'gnomADe_MID_AF',
-    'gnomADe_NFE_AF',
-    'gnomADe_REMAINING_AF',
-    'gnomADe_SAS_AF',
-    'gnomADg_AF',
-    'gnomADg_AFR_AF',
-    'gnomADg_AMI_AF',
-    'gnomADg_AMR_AF',
-    'gnomADg_ASJ_AF',
-    'gnomADg_EAS_AF',
-    'gnomADg_FIN_AF',
-    'gnomADg_MID_AF',
-    'gnomADg_NFE_AF',
-    'gnomADg_REMAINING_AF',
-    'gnomADg_SAS_AF',
+    # Population genetics/allele frequency
+    "AF": "population genetics",
+    "AFR_AF": "population genetics",
+    "AMR_AF": "population genetics",
+    "EAS_AF": "population genetics",
+    "EUR_AF": "population genetics",
+    "SAS_AF": "population genetics",
+    "gnomADe_AF": "population genetics",
+    "gnomADe_AFR_AF": "population genetics",
+    "gnomADe_AMR_AF": "population genetics",
+    "gnomADe_ASJ_AF": "population genetics",
+    "gnomADe_EAS_AF": "population genetics",
+    "gnomADe_FIN_AF": "population genetics",
+    "gnomADe_MID_AF": "population genetics",
+    "gnomADe_NFE_AF": "population genetics",
+    "gnomADe_REMAINING_AF": "population genetics",
+    "gnomADe_SAS_AF": "population genetics",
+    "gnomADg_AF": "population genetics",
+    "gnomADg_AFR_AF": "population genetics",
+    "gnomADg_AMI_AF": "population genetics",
+    "gnomADg_AMR_AF": "population genetics",
+    "gnomADg_ASJ_AF": "population genetics",
+    "gnomADg_EAS_AF": "population genetics",
+    "gnomADg_FIN_AF": "population genetics",
+    "gnomADg_MID_AF": "population genetics",
+    "gnomADg_NFE_AF": "population genetics",
+    "gnomADg_REMAINING_AF": "population genetics",
+    "gnomADg_SAS_AF": "population genetics",
+    "AF_TGP": "population genetics",
+    "AllOfUs_gvs_all_af": "population genetics",
+    "AllOfUs_gvs_max_af": "population genetics",
+    "AllOfUs_gvs_afr_af": "population genetics",
+    "AllOfUs_gvs_amr_af": "population genetics",
+    "AllOfUs_gvs_eas_af": "population genetics",
+    "AllOfUs_gvs_eur_af": "population genetics",
+    "AllOfUs_gvs_mid_af": "population genetics",
+    "AllOfUs_gvs_oth_af": "population genetics",
+    "AllOfUs_gvs_sas_af": "population genetics",
+    "1000Gp3_AF": "population genetics",
+    "1000Gp3_AFR_AF": "population genetics",
+    "1000Gp3_AMR_AF": "population genetics",
+    "1000Gp3_EAS_AF": "population genetics",
+    "1000Gp3_EUR_AF": "population genetics",
+    "1000Gp3_SAS_AF": "population genetics",
+    "ALFA_African_AF": "population genetics",
+    "ALFA_African_American_AF": "population genetics",
+    "ALFA_African_Others_AF": "population genetics",
+    "ALFA_Asian_AF": "population genetics",
+    "ALFA_East_Asian_AF": "population genetics",
+    "ALFA_European_AF": "population genetics",
+    "ALFA_Latin_American_1_AF": "population genetics",
+    "ALFA_Latin_American_2_AF": "population genetics",
+    "ALFA_Other_AF": "population genetics",
+    "ALFA_Other_Asian_AF": "population genetics",
+    "ALFA_South_Asian_AF": "population genetics",
+    "ALFA_Total_AF": "population genetics",
+    "TOPMed_frz8_AF": "population genetics",
 
-    ### 1000 Genomes Project ####
-    "AF_TGP",
+    # Gene constraint
+    "LOEUF": "gene constraint",
+    "pHaplo": "gene constraint",
+    "pTriplo": "gene constraint",
+    "bStatistic": "gene constraint",
+    "bStatistic_converted_rankscore": "gene constraint", 
 
-    #### AllOfUs #### 
-    'AllOfUs_gvs_all_af',
-    'AllOfUs_gvs_max_af',
-    'AllOfUs_gvs_afr_af',
-    'AllOfUs_gvs_amr_af',
-    'AllOfUs_gvs_eas_af',
-    'AllOfUs_gvs_eur_af',
-    'AllOfUs_gvs_mid_af',
-    'AllOfUs_gvs_oth_af',
-    'AllOfUs_gvs_sas_af',
+    # Clinical/phenotype
+    "Geno2MP_HPO_count": "clinical",
 
-    "MOTIF_SCORE_CHANGE",
+    # Other
+    # (add more as needed)
+}
 
-    #### pHaplo #### 
-    "pHaplo", # Probability of haploinsufficiency (deletion intolerance) of the affected gene
-    "pTriplo", # Probability of triplosensitivity (duplication intolerance) of the affected gene
-
-    ### Conservation ####
-    "SIFT_score",
-    "PolyPhen_score",
-
-
-    #### Geno2MP ####
-    'Geno2MP_HPO_count',
-
-    #### BLOSUM62 ####
-    'BLOSUM62',
-
-    #### Enformer ####
-    'Enformer_SAD',
-    'Enformer_SAR', 
-
-    #### mutfunc ####
-    "mutfunc_exp",
-    "mutfunc_int",
-    "mutfunc_mod",
-    "mutfunc_motif"
-
-
-    #### 1000Gp3 ####
-    '1000Gp3_AF',
-    '1000Gp3_AFR_AF',
-    '1000Gp3_AMR_AF',
-    '1000Gp3_EAS_AF',
-    '1000Gp3_EUR_AF',
-    '1000Gp3_SAS_AF',
-
-    #### ALFA ####
-    'ALFA_African_AF', 
-    'ALFA_African_American_AF', 
-    'ALFA_African_Others_AF', 
-    'ALFA_Asian_AF', 
-    'ALFA_East_Asian_AF', 
-    'ALFA_European_AF', 
-    'ALFA_Latin_American_1_AF', 
-    'ALFA_Latin_American_2_AF', 
-    'ALFA_Other_AF', 
-    'ALFA_Other_Asian_AF', 
-    'ALFA_South_Asian_AF', 
-    'ALFA_Total_AF', 
-
-
-    #### ayesDel #### 
-    # 'BayesDel_addAF_rankscore',  # commented out, _score is available
-    'BayesDel_addAF_score', 
-    # 'BayesDel_noAF_rankscore',   # commented out, _score is available
-    'BayesDel_noAF_score',
-
-    #### DANN ####
-    # 'DANN_rankscore',            # commented out, _score is available
-    'DANN_score',
-
-    #### DEOGEN2 ####
-    # 'DEOGEN2_rankscore',         # commented out, _score is available
-    'DEOGEN2_score',
-
-    #### ESM1b ####
-    # 'ESM1b_rankscore',           # commented out, _score is available
-    'ESM1b_score',
-
-    #### Eigen ####
-    'Eigen-PC-phred_coding',
-    'Eigen-PC-raw_coding',
-    # 'Eigen-PC-raw_coding_rankscore',  # commented out, _score is available
-    'Eigen-phred_coding',
-    'Eigen-raw_coding',
-    # 'Eigen-raw_coding_rankscore',     # commented out, _score is available
-
-    #### GERP++ ####
-    'GERP++_NR',
-    'GERP++_RS',
-    # 'GERP++_RS_rankscore',        # commented out, _score is available
-    'GERP_91_mammals',
-    # 'GERP_91_mammals_rankscore',  # commented out, _score is available
-
-    #### LIST-S2 ####
-    # 'LIST-S2_rankscore',          # commented out, _score is available
-    'LIST-S2_score',
-
-    #### MPC ####
-    # 'MPC_rankscore',              # commented out, _score is available
-    'MPC_score',
-
-    #### MVP ####
-    # 'MVP_rankscore',              # commented out, _score is available
-    'MVP_score',
-
-    #### MetaLR #### 
-    # 'MetaLR_rankscore',           # commented out, _score is available
-    'MetaLR_score',
-
-    #### MetaRNN #### 
-    # 'MetaRNN_rankscore',          # commented out, _score is available
-    'MetaRNN_score',
-
-    #### MetaSVM #### 
-    # 'MetaSVM_rankscore',          # commented out, _score is available
-    'MetaSVM_score',
-
-    #### MutFormer ####
-    # 'MutFormer_rankscore',        # commented out, _score is available
-    'MutFormer_score',
-
-    #### MutationAssessor #### 
-    # 'MutationAssessor_rankscore', # commented out, _score is available
-    'MutationAssessor_score',
-
-    #### MutationTaster ####
-    'MutationTaster_converted_rankscore', 
-    # 'MutationTaster_score',
-    # 'MutationTaster_trees_benign',
-    # 'MutationTaster_trees_deleterious',
-
-    #### PROVEAN ####
-    'PROVEAN_converted_rankscore',
-    'PROVEAN_pred',
-    'PROVEAN_score',
-
-    #### PrimateAI ####
-    'PrimateAI_pred',
-    # 'PrimateAI_rankscore',        # commented out, _score is available
-    'PrimateAI_score',
-
-    #### Reliability_index ####
-    'Reliability_index',
-
-    #### TOPMed ####
-    # 'TOPMed_frz8_AC',
-    'TOPMed_frz8_AF', 
-
-    #### VARITY ####
-    # 'VARITY_ER_LOO_rankscore',    # commented out, _score is available
-    'VARITY_ER_LOO_score',
-    # 'VARITY_ER_rankscore',        # commented out, _score is available
-    'VARITY_ER_score',
-    # 'VARITY_R_LOO_rankscore',     # commented out, _score is available
-    'VARITY_R_LOO_score',
-    # 'VARITY_R_rankscore',         # commented out, _score is available
-    'VARITY_R_score',
-
-    #### bStatistic ####
-    'bStatistic',
-    'bStatistic_converted_rankscore',
-
-    #### fathmm-XF ####
-    # 'fathmm-XF_coding_rankscore', # commented out, _score is available
-    'fathmm-XF_coding_score', 
-
-    #### gMVP ####
-    # 'gMVP_rankscore',             # commented out, _score is available
-    'gMVP_score',
-
-    #### phastCons ####
-    'phastCons100way_vertebrate',
-    # 'phastCons100way_vertebrate_rankscore', # commented out, _score is available
-    'phastCons17way_primate',
-    # 'phastCons17way_primate_rankscore',     # commented out, _score is available
-    'phastCons470way_mammalian',
-    # 'phastCons470way_mammalian_rankscore',  # commented out, _score is available
-    'phyloP100way_vertebrate',
-    # 'phyloP100way_vertebrate_rankscore',    # commented out, _score is available
-    'phyloP17way_primate',
-    # 'phyloP17way_primate_rankscore',        # commented out, _score is available
-    'phyloP470way_mammalian',
-    # 'phyloP470way_mammalian_rankscore',     # commented out, _score is available
- 
- 
-    ]
+ANNOT_COLS = list(ANNOT_DICT.keys())
 
 def filter_annotations(
     df,

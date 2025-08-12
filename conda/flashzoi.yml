@@ -10,7 +10,7 @@ dependencies:
   - gcc
   - libgcc
   - libstdcxx-ng
-  # Optional
+  ## Optional
   - bioconda::pgenlib # Optional
   - xarray # Optional
   - zarr # Optional
@@ -20,4 +20,5 @@ dependencies:
       - genvarloader
       # - git+https://github.com/mcvickerlab/GenVarLoader.git # Optional
       - borzoi-pytorch
+      - flash-attn==2.6.3 # Avoids build issues: pip install flash-attn==2.6.3 --no-build-isolation
       - ipykernel
