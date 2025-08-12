@@ -13,6 +13,7 @@
 #SBATCH --mail-user=schilder@cshl.edu
 #SBATCH --export=ALL
 #SBATCH --array=0-22 # 23 jobs: 1-22 and X
+#SBATCH --workdir=/home/schilder/projects/VEP_DNA/notebooks
 
 # Print some information about the job
 echo "Job ID: $SLURM_JOB_ID"
