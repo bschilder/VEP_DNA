@@ -3,7 +3,7 @@ import pooch
 import polars as pl
 import pandas as pd
 
-import utils
+import src.utils as utils
 
 
 ## Split clinvar.vcf.gx into one file per chromosome

@@ -49,7 +49,7 @@ chmod 777 $REPO_DIR/src/*
 # You can modify these arguments as needed
 echo "Running VEP pipeline..."
 
-srun --chdir=$REPO_DIR/ 
+srun --chdir=$REPO_DIR/ \
 	python $REPO_DIR/src/vep_pipeline_onekg_cli.py \
 	--bed $REPO_DIR/data/UTR/clinvar_utr_snv.bed.gz \
 	--cohort 1000_Genomes_on_GRCh38 \

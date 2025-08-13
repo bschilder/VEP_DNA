@@ -9,8 +9,7 @@ import pooch
 #import torch
 
 import src.utils as utils
-import src.genvarloader as GVL
-import genvarloader as gvl
+import src.GVL as GVL 
 
 def get_model_to_batchsize_map(model_name=None,
                                default=30):
