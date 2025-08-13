@@ -1,7 +1,0 @@
-Job ID: 106619
-Node: bamgpu24
-Start time: Tue Aug 12 20:01:19 EDT 2025
-GPUs assigned: 0
-Running for chromosome: 13 (array index: 12)
-Conda has been initialized
-Running VEP pipeline...

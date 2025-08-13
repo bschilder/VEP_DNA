@@ -12,11 +12,7 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=schilder@cshl.edu
 #SBATCH --export=ALL
-<<<<<<< HEAD
-#SBATCH --array=0-22 # 23 jobs: 1-22 and X
-=======
 #SBATCH --array=0-22 # 23 jobs: 1-22 and X 
->>>>>>> 6ce59cb71621b28cd3612a726a7e61168816d67a
 
 # Print some information about the job
 echo "Job ID: $SLURM_JOB_ID"
@@ -52,12 +48,8 @@ chmod 777 $REPO_DIR/src/*
 # Run the training script with command line arguments
 # You can modify these arguments as needed
 echo "Running VEP pipeline..."
-<<<<<<< HEAD
-srun --chdir=$HOME/projects/VEP_DNA/notebooks \
-=======
 
 srun --chdir=$REPO_DIR/ 
->>>>>>> 6ce59cb71621b28cd3612a726a7e61168816d67a
 	python $REPO_DIR/src/vep_pipeline_onekg_cli.py \
 	--bed $REPO_DIR/data/UTR/clinvar_utr_snv.bed.gz \
 	--cohort 1000_Genomes_on_GRCh38 \
