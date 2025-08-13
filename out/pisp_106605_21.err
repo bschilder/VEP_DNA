@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/grid/koo/home/schilder/projects/VEP_DNA/src/vep_pipeline_onekg_cli.py", line 22, in <module>
+    from vep_pipeline import vep_pipeline_onekg, get_model_to_batchsize_map, get_model_to_metric_map
+  File "/grid/koo/home/schilder/projects/VEP_DNA/src/vep_pipeline.py", line 12, in <module>
+    import src.utils as utils
+ModuleNotFoundError: No module named 'src'
+srun: error: bamgpu29: task 0: Exited with exit code 1
