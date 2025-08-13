@@ -12,8 +12,7 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=schilder@cshl.edu
 #SBATCH --export=ALL
-#SBATCH --array=0-22 # 23 jobs: 1-22 and X
-#SBATCH --workdir=/home/schilder/projects/VEP_DNA/notebooks
+#SBATCH --array=0-22 # 23 jobs: 1-22 and X 
 
 # Print some information about the job
 echo "Job ID: $SLURM_JOB_ID"
@@ -40,7 +39,8 @@ conda activate flashzoi
 
 # Navigate to your project directory
 REPO_DIR=$HOME/projects/VEP_DNA
-cd $REPO_DIR/notebooks
+echo "Navigating to $REPO_DIR"
+cd $REPO_DIR
 
 # Make the scripts executable 
 chmod 777 $REPO_DIR/src/*
@@ -48,7 +48,9 @@ chmod 777 $REPO_DIR/src/*
 # Run the training script with command line arguments
 # You can modify these arguments as needed
 echo "Running VEP pipeline..."
-srun python $REPO_DIR/src/vep_pipeline_onekg_cli.py \
+
+srun --chdir=$REPO_DIR/ 
+	python $REPO_DIR/src/vep_pipeline_onekg_cli.py \
 	--bed $REPO_DIR/data/UTR/clinvar_utr_snv.bed.gz \
 	--cohort 1000_Genomes_on_GRCh38 \
 	--variant-set clinvar_utr_snv \
@@ -57,6 +59,8 @@ srun python $REPO_DIR/src/vep_pipeline_onekg_cli.py \
 	--limit-chroms $CHROM 
 	# --limit-samples 1000 \
 	# --limit-sites 1000
+
+echo "Pipeline complete."
 
 # Deactivate the environment
 conda deactivate

@@ -12,15 +12,20 @@ import os
 import polars as pl
 from pathlib import Path
 
-# Ensure the src directory is in the Python path
+# Add the project root directory to sys.path so modules can be imported
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SRC_DIR = os.path.join(SCRIPT_DIR, "src")
-if SRC_DIR not in sys.path:
-    sys.path.insert(0, SRC_DIR)
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-# Import the VEP pipeline functions
-from vep_pipeline import vep_pipeline_onekg, get_model_to_batchsize_map, get_model_to_metric_map
-import clinvar as cv
+# Try to import using absolute imports first, fall back to relative if needed
+try:
+    from vep_pipeline import vep_pipeline_onekg, get_model_to_batchsize_map, get_model_to_metric_map
+    import clinvar as cv
+except ImportError:
+    # Fall back to src-prefixed imports if absolute imports fail
+    from src.vep_pipeline import vep_pipeline_onekg, get_model_to_batchsize_map, get_model_to_metric_map
+    import src.clinvar as cv
 
 def parse_arguments():
     """Parse command line arguments."""

@@ -10,7 +10,10 @@ import pooch
 import torch
 
 import src.utils as utils
+
+# Import our genvarloader helper functions from src
 import src.genvarloader as GVL
+# Import the genvarloader module 
 import genvarloader as gvl
 
 def get_model_to_batchsize_map(model_name=None,
@@ -912,8 +915,8 @@ def vep_pipeline_onekg(bed,
         xarray.Dataset: The results of the VEP pipeline.
     """
     
-    import src.clinvar as cv   
-    import src.onekg as og
+    import clinvar as cv   
+    import onekg as og
     import genvarloader as gvl
      
     # Merged fasta reference
