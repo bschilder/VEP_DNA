@@ -13,7 +13,7 @@ from borzoi_pytorch import Borzoi
 import src.dimreduction as dr
 import src.utils as utils
 import src.vep_metrics as vm
-import src.genvarloader as GVL
+import src.GVL as GVL
 
 # All models: https://huggingface.co/johahi
 # 'johahi/borzoi-replicate-[0-3][-mouse]'
