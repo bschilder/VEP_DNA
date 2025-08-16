@@ -1,0 +1,25 @@
+name: decima
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python>=3.10,<3.13
+  - pooch
+  - scikit-learn
+  - bioconda::pyjaspar
+  ## Necessary for Elzar HPC
+  - gcc
+  - libgcc
+  - libstdcxx-ng
+  ## Optional
+  - bioconda::pgenlib # Optional
+  - xarray # Optional
+  - zarr # Optional
+  - dask # Optional
+  - pip
+  - pip:
+      # - genvarloader
+      ## Latest version required for new ds.n_variants feature
+      - git+https://github.com/mcvickerlab/GenVarLoader.git 
+      - decima 
+      - ipykernel

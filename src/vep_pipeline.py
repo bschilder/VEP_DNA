@@ -31,6 +31,7 @@ def get_model_to_batchsize_map(model_name=None,
         "evo2_7b_base": default,
         "evo2_40b_base": default,
         "dnabert2": default,
+        "decima": default,
     }
     if model_name is not None:
         if model_name not in bsmap:
