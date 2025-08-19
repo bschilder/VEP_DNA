@@ -12,7 +12,7 @@
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=schilder@cshl.edu
 #SBATCH --export=ALL
-#SBATCH --array=0-22 # 23 jobs: 1-22 and X 
+#SBATCH --array=0-5 # 23 jobs: 1-22 and X 
 
 # Print some information about the job
 echo "Job ID: $SLURM_JOB_ID"
@@ -21,7 +21,8 @@ echo "Start time: $(date)"
 echo "GPUs assigned: $CUDA_VISIBLE_DEVICES"
 
 # Chromosome list: 1-22 and X
-CHROMS=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X)
+#CHROMS=(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 X)
+CHROMS=(5 7 9 10 16)
 
 # Convert 1-based SLURM_ARRAY_TASK_ID to 0-based array index
 ARRAY_INDEX=$((SLURM_ARRAY_TASK_ID - 1))
