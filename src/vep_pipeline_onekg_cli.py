@@ -247,8 +247,13 @@ def main():
             
     except Exception as e:
         print(f"Error running VEP pipeline: {e}", file=sys.stderr)
+        if "out of bounds for axis" in str(e):
+            print(
+                "Please try deleting your .gvi files and rerunning. "
+                "e.g. rm ~/projects/data/1000_Genomes_on_GRCh38/vcf/*.gvi",
+                file=sys.stderr
+            )
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

@@ -679,34 +679,67 @@ def get_consensus_sequence(site_ds,
 
 
 
-def bytearray_to_ohe_torch(seqs,
-                            verbose=False, 
-                            transpose=True,
-                            **kwargs): 
+def bytearray_to_ohe_torch(
+    seqs,
+    verbose=False, 
+    transpose=True,
+    stack_ploid=False,
+    permute=(1, 0, 2),
+    to_type=None,
+    **kwargs
+):
     """
-    Convert a bytearray to a one-hot encoded torch tensor.
+    Convert a bytearray or string sequence to a one-hot encoded PyTorch tensor.
+
+    Args:
+        seqs (np.ndarray, str, or bytearray): Input sequence(s) to be converted. Can be a numpy array, string, or bytearray.
+        verbose (bool, optional): If True, prints debugging information about shapes and intermediate results. Default is False.
+        transpose (bool, optional): Whether to transpose the one-hot encoded array before conversion. Default is True.
+        stack_ploid (bool, optional): If True, stack ploidy dimension before encoding. Default is False.
+        permute (tuple or None, optional): If not None, permute the tensor dimensions according to this tuple after conversion. Default is (1, 0, 2).
+        to_type (torch.dtype or None, optional): Data type to cast the resulting tensor to. If None, uses torch.float16. Default is None.
+        **kwargs: Additional keyword arguments passed to the one-hot encoding utility.
+
+    Returns:
+        torch.Tensor: One-hot encoded tensor of the input sequence(s), possibly permuted and cast to the specified type.
+
+    Example:
+        >>> arr = np.array([[0, 1, 2], [2, 1, 0]], dtype=np.uint8)
+        >>> bytearray_to_ohe_torch(arr)
+        tensor([[[1., 0., 0.],
+                 [0., 1., 0.],
+                 [0., 0., 1.]],
+                [[0., 0., 1.],
+                 [0., 1., 0.],
+                 [1., 0., 0.]]], dtype=torch.float16)
     """
     if verbose:
-        print(seqs.shape)
-        print(seqs)
+        print("Input seqs shape:", getattr(seqs, "shape", None))
+        print("Input seqs:", seqs)
     import torch
 
     if isinstance(seqs, str):
         seqs = string_to_bytearray(seqs)[None]
 
+    if stack_ploid:
+        seqs = stack_ploidy(seqs)
+
     # Convert sequences to one-hot encoding
-    ohe = utils.one_hot_seq(seqs, transpose=transpose, **kwargs)  # Changed to transpose=True to get correct shape
+    ohe = utils.one_hot_seq(seqs, transpose=transpose, **kwargs)
     if verbose:
-        print(ohe.shape)
+        print("One-hot encoded shape:", ohe.shape)
 
     # Convert to torch tensor and permute dimensions to match expected shape
-    x = torch.from_numpy(ohe).permute(2, 0, 1)  # Permute to get [batch_size, ohe, seq_len]
+    x = torch.from_numpy(ohe)
+    if permute is not None:
+        x = x.permute(permute)  # Permute to get [batch_size, ohe, seq_len]
 
-    # # Convert to float16
-    x = x.to(torch.float16) 
+    if to_type is None:
+        to_type = torch.float16
+    x = x.to(to_type)
 
     if verbose:
-        print(x.shape)
+        print("Output tensor shape:", x.shape)
 
     return x
 
@@ -877,3 +910,13 @@ def filter_region_to_site(region_to_site,
         print("Sites after region_idx==site_idx filter: ", region_to_site.shape)
     
     return region_to_site
+
+
+def get_n_variants_agg(ds,
+                       agg_func=np.median):
+    
+    # This method was introduced in more recent versions of GVL
+    if not hasattr(ds, "n_variants") or not callable(getattr(ds, "n_variants")):
+        raise AttributeError("The provided object 'ds' does not have a callable 'n_variants' method.")
+    
+    return agg_func(ds.n_variants().squeeze().flatten())

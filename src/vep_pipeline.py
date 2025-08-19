@@ -31,6 +31,7 @@ def get_model_to_batchsize_map(model_name=None,
         "evo2_7b_base": default,
         "evo2_40b_base": default,
         "dnabert2": default,
+        "decima": default,
     }
     if model_name is not None:
         if model_name not in bsmap:
@@ -1034,6 +1035,7 @@ def vep_pipeline_onekg(bed,
 def load_vep_results(xr_ds_path, 
                      notnull=True, 
                      as_df=True,
+                     use_dask=True,
                      dropna_subset=None,
                      verbose=True):
     """
@@ -1054,7 +1056,10 @@ def load_vep_results(xr_ds_path,
     if notnull:
         xr_ds = xr_ds.where(xr_ds.notnull())
     if as_df:
-        df = xr_ds.to_dataframe().reset_index()
+        if use_dask:
+            df = xr_ds.to_dask_dataframe().reset_index()
+        else:
+            df = xr_ds.to_dataframe().reset_index()
         if dropna_subset is not None:
             df = df.dropna(subset=dropna_subset)
         

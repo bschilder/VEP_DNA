@@ -2,23 +2,15 @@ import os
 import pandas as pd
 import pooch
 from tqdm import tqdm
-import glob
-import polars as pl
 
 import src.utils as utils
 import src.config as config
-import src.clinvar as cv
+
 
 DEFAULT_KEY = "1000_Genomes_30x_on_GRCh38"
 
-def get_chr_1kg(vcf_file,
-                key=DEFAULT_KEY):
-    """
-    Get the chromosome number from a 1000 Genomes Project VCF file.
-    """
-    ftp_dict = get_ftp_dict()
+def get_chr_1kg(vcf_file):
     return os.path.basename(vcf_file).split(".")[-3]
-
 
 def list_remote_fasta(url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/phase3/20130502.phase3.analysis.sequence.index",
                        **kwargs):
@@ -263,25 +255,157 @@ def get_ped(key=DEFAULT_KEY):
     if key == 'Human_Genome_Diversity_Project':
         ped.rename(columns={'sample': 'Individual ID'}, inplace=True)
         # Using mappings from https://doi.org/10.1101/2023.01.23.525248
-        superpop_dict = {'EAST_ASIA':'EAS',
-                         'CENTRAL_SOUTH_ASIA':'CSA',
-                         'MIDDLE_EAST':'MID',
-                         'EUROPE':'EUR',
-                         'AFRICA':'AFR',
-                         'AMERICA':'AMR',
-                         'OCEANIA':'OCE',
-                         'SOUTH_ASIA':'SAS'
-                         }
-        ped['superpopulation'] = ped['region'].map(superpop_dict)
+        # Map each region/population string to a superpopulation code (EAS, CSA, MID, EUR, AFR, AMR, OCE, SAS, or REF)
+     
+        ped['superpopulation'] = ped['region'].map(SUPERPOP_DICT)
 
     # Set index to sample column
     ped.index = ped['Individual ID'].tolist() 
     
     return ped
 
+SUPERPOP_DICT = {
+    # Self
+    "AFR": "AFR",
+    "AMR": "AMR",
+    "CSA": "CSA",
+    "EAS": "EAS",
+    "EUR": "EUR",
+    "MID": "MID",
+    "OCE": "OCE",
+    "SAS": "SAS",
+    "EUR,AFR": "AFR", # If mixed, assign to AFR 
+
+    # REF
+    "REF": "REF",
+
+    # Spelled out
+    "AFRICA": "AFR",
+    "AMERICA": "AMR",
+    "CENTRAL_SOUTH_ASIA": "CSA",
+    "EAST_ASIA": "EAS",
+    "EUROPE": "EUR",
+    "MIDDLE_EAST": "MID",
+    "OCEANIA": "OCE",
+    "SOUTH_ASIA": "SAS",
+
+    # Human Genome Diversity Project
+    "Africa (HGDP)": "AFR",
+    "Africa (SGDP)": "AFR",
+    "Africa (SGDP),Africa (HGDP)": "AFR",
+    "African Ancestry": "AFR",
+    "African Ancestry,Africa (SGDP)": "AFR",
+    "America (HGDP)": "AMR",
+    "America (SGDP)": "AMR",
+    "America (SGDP),America (HGDP)": "AMR",
+    "American Ancestry": "AMR",
+    "Central Asia and Siberia (SGDP)": "CSA",
+    "Central South Asia (HGDP)": "CSA",
+    "East Asia (HGDP)": "EAS",
+    "East Asia (SGDP)": "EAS",
+    "East Asia (SGDP),East Asia (HGDP)": "EAS",
+    "East Asia (SGDP),East Asian Ancestry": "EAS",
+    "East Asian Ancestry": "EAS",
+    "Europe (HGDP)": "EUR",
+    "European Ancestry": "EUR",
+    "European Ancestry,West Eurasia (SGDP)": "EUR",
+    "European Ancestry,African Ancestry": "AFR",  # If mixed, assign to AFR
+    "Middle East (HGDP)": "MID",
+    "Middle East (HGDP),Africa (SGDP)": "AFR",  # Assign to AFR, could also be MID
+    "Oceania (HGDP)": "OCE",
+    "Oceania (SGDP)": "OCE",
+    "Oceania (SGDP),Oceania (HGDP)": "OCE",
+    "South Asia (SGDP)": "SAS",
+    "South Asia (SGDP),Central South Asia (HGDP)": "CSA",
+    "South Asia (SGDP),South Asian Ancestry": "SAS",
+    "South Asian Ancestry": "SAS",
+    "West Eurasia (SGDP)": "EUR",
+}
+
+SUPERPOP_NAMES_DICT = {
+    "AFR": "African",
+    "AMR": "Admixed American",
+    "CSA": "Central South Asian",
+    "EAS": "East Asian",
+    "EUR": "European",
+    "MID": "Middle Eastern",
+    "OCE": "Oceanian",
+    "SAS": "South Asian",
+    "REF": "Reference",
+    # Add self-mapping
+    "African":"African",
+    "American":"Admixed American",
+    "Central South Asian":"Central South Asian",
+    "East Asian":"East Asian",
+    "European":"European",
+    "Middle Eastern":"Middle Eastern",
+    "Oceanian":"Oceanian",
+    "South Asian":"South Asian",
+}
+ 
+MISSING_SAMPLE_METADATA = {
+    'HGDP00927': {
+        'population': 'YRI',
+        'population_code': 'YRI',
+        'population_name': 'Yoruba',
+        'superpopulation': 'AFR',
+        'sex': 'male',
+        'source': 'https://www.cellosaurus.org/CVCL_I927'
+    },
+    'HGDP01284': {
+        'population': 'GWD',
+        'population_code': 'GWD',
+        'population_name': 'Gambian Mandinka',
+        'superpopulation': 'AFR',
+        'sex': 'male', 
+        'source': 'https://www.cellosaurus.org/CVCL_I420'
+    },
+    'HGDP01307': {
+        'population': 'CDX',
+        'population_code': 'CDX',
+        'population_name': 'Dai Chinese',
+        'superpopulation': 'EAS',
+        'sex': 'male', 
+        'source': 'https://www.cellosaurus.org/CVCL_I481'
+    },
+    'HGDP00665': {
+        'population': 'Sardinian',
+        'population_code': 'Sardinian',
+        'population_name': 'Sardinian',
+        'superpopulation': 'EUR',
+        'sex': 'male', 
+        'source': 'https://www.cellosaurus.org/CVCL_I665'
+    },
+    'HGDP00998': {
+        'population': 'Karitiana',
+        'population_code': 'Karitiana',
+        'population_name': 'Karitiana',
+        'superpopulation': 'AMR',
+        'sex': 'male',
+        'source': 'https://www.cellosaurus.org/CVCL_I998'
+    },
+    'HGDP00521': {
+        'population': 'French',
+        'population_code': 'French',
+        'population_name': 'French',
+        'superpopulation': 'EUR',
+        'sex': 'male',
+        'source': 'https://www.cellosaurus.org/CVCL_I521'
+    },
+    'HGDP00778': {
+        'population': 'Han Chinese',
+        'population_code': 'CHB',
+        'population_name': 'Han Chinese',
+        'superpopulation': 'EAS',
+        'sex': 'male',
+        'source': 'https://www.cellosaurus.org/CVCL_I778'
+    }
+}
+
 def get_sample_metadata(key=DEFAULT_KEY,
                         harmonized=True,
                         prohap_format=False,
+                        coord_data_path="data/1KG/kgp_allmeta.csv.gz",
                         ):
     """
     Retrieve and merge sample metadata from the 1000 Genomes Project.
@@ -314,6 +438,35 @@ def get_sample_metadata(key=DEFAULT_KEY,
                                                         "Sex":"sex"})
         # Reassign non-standard superpopulation codes
         sample_metadata.loc[sample_metadata['superpopulation']=="EUR,AFR", "superpopulation"] = "AFR"
+        
+        # Some samples are missing metadata, so we add them manually
+        for sample, metadata in MISSING_SAMPLE_METADATA.items():
+            sample_metadata.loc[sample_metadata["sample"]==sample, "population"] = metadata["population"]
+            sample_metadata.loc[sample_metadata["sample"]==sample, "population_code"] = metadata["population_code"]
+            sample_metadata.loc[sample_metadata["sample"]==sample, "population_name"] = metadata["population_name"]
+            sample_metadata.loc[sample_metadata["sample"]==sample, "superpopulation"] = metadata["superpopulation"]
+            sample_metadata.loc[sample_metadata["sample"]==sample, "sex"] = metadata["sex"]
+            
+        sample_metadata.loc[sample_metadata['superpopulation'].isna(), "superpopulation"] = sample_metadata.loc[sample_metadata['superpopulation'].isna()]["superpopulation_name"].map(SUPERPOP_DICT)
+
+        # Backfill population code
+        sample_metadata.loc[sample_metadata["population_code"].isna(), "population_code"] = (
+            sample_metadata.loc[sample_metadata["population_code"].isna(), 
+                                ["Population code", "population", "population_name"]]
+            .bfill(axis=1)
+            .iloc[:, 0]
+        )
+        # Get rid of entries with multiple codes
+        sample_metadata["population_code"] = sample_metadata["population_code"].str.split(",").str[0]
+
+
+        kgp = pd.read_csv(coord_data_path)
+        sample_metadata = kgp[["pop","lat","lng"]].merge(sample_metadata, 
+                         left_on="pop", 
+                         right_on="population_code", 
+                         how="right")
+
+        print(sample_metadata['superpopulation'].isna().sum(), "samples are missing superpopulation metadata")
     else:
         ped = get_ped(key=key)
         
@@ -352,8 +505,7 @@ def get_sample_metadata(key=DEFAULT_KEY,
     return sample_metadata
 
 def get_annotation_vcf(chrom,
-                       base_url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/",
-                       **kwargs):
+                       base_url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/"):
     """
     Retrieve a variant annotation VCF file for a specific chromosome.
     
@@ -364,28 +516,16 @@ def get_annotation_vcf(chrom,
     base_url : str, optional
         Base URL for the annotation VCF files.
         Default points to the 1000 Genomes Project functional annotation directory.
-    **kwargs : dict
-        Additional keyword arguments to pass to the VCF constructor.
         
     Returns:
     --------
-    genoray.VCF
-        A genoray VCF object for the requested chromosome annotation file.
+    pysam.VariantFile
+        A pysam VariantFile object for the requested chromosome annotation file.
     """
-    from genoray import VCF
-    
+    import pysam
     chrom = "chr"+str(chrom).replace("chr", "")
     url = f"{base_url}ALL.{chrom}.phase3_shapeit2_mvncall_integrated_v5.20130502.sites.annotation.vcf.gz"  
-
-    vcf_path = pooch.retrieve(url,
-                              fname=url.split("/")[-1],
-                              known_hash=None,
-                              progressbar=True)
-    index_path = pooch.retrieve(url+".tbi",
-                                fname=url.split("/")[-1]+".tbi",
-                                known_hash=None,
-                                progressbar=True)
-    return VCF(vcf_path, **kwargs)
+    return pysam.VariantFile(url)
 
 def query_annotation_vcf(vcf,
                          rec,
@@ -495,114 +635,108 @@ def _get_hgdp_manifest():
     return pd.DataFrame(data, columns=["fname", "datetime", "size"])
 
 
-def get_onekg_vcf_summary(key=DEFAULT_KEY, 
-                          per_individual=False):
+def _rm_subplot_prefixes(g):
+    g.set_titles(row_template='{row_name}', 
+                 col_template='{col_name}')  # Only show model name without prefix
     
-    # per individual summary
-    if per_individual:
-        url = "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/functional_categories_summary_per_individual.20150208.txt"
-    # per superpopulation summary
+
+
+def plot_world_map(df=None,
+                   figsize=(12, 6),
+                   s=40,
+                   alpha=0.8,
+                   cmap=None,
+                   color_col="superpopulation",
+                   land_color="lightgray",
+                   edge_color="black",
+                   title=None,
+                   xlabel="Longitude",
+                   ylabel="Latitude",
+                   cache=pooch.os_cache("natural-earth-vector"),
+                   **kwargs):
+    """
+    Plot a world map with the samples from the AnnData object.
+    """
+    import geopandas as gpd 
+    import pooch
+    import matplotlib.pyplot as plt
+
+    if cmap is None:
+        cmap = utils.get_superpop_palette()
+
+    if df is None:
+        df = get_sample_metadata()
+
+    # Only plot samples with valid lat/lng
+    geo_obs = df.dropna(subset=["lat", "lng"])
+
+    plt.figure(figsize=figsize)
+    # Plot a simple world map as background
+    plt.scatter([], [], alpha=0)  # dummy for legend
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+
+    #Use a world map image as background
+    registry={
+        "ne_110m_admin_0_countries.shp": None,
+        "ne_110m_admin_0_countries.shx": None,
+    } 
+    odie = pooch.create( 
+        path = cache,
+        base_url = "https://github.com/nvkelso/natural-earth-vector/raw/refs/heads/master/110m_cultural/",
+        registry=registry,
+    )
+    
+    for file in reversed(list(registry.keys())):
+        file_path = odie.fetch(file)
+        print(file_path)
+
+
+    world = gpd.read_file(file_path)
+    world.plot(ax=plt.gca(), 
+               color=land_color, 
+               edgecolor=edge_color,
+               **kwargs)
+
+    # Plot the sample points, handling both colormap and dict-of-colors
+    color_values = geo_obs[color_col]
+    categories = color_values.astype("category").cat.categories
+
+    if isinstance(cmap, dict):
+        # Map each sample to its color using the cmap dict
+        point_colors = color_values.map(cmap)
+        scatter = plt.scatter(
+            geo_obs["lng"], geo_obs["lat"],
+            c=point_colors,
+            s=s,
+            alpha=alpha,
+            label=None
+        )
     else:
-        url = "https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/functional_categories_summary_per_superpop.20150217.txt"
-    
-    return pd.read_csv(url, sep="\t")
+        # Use matplotlib colormap
+        scatter = plt.scatter(
+            geo_obs["lng"], geo_obs["lat"],
+            c=color_values.astype("category").cat.codes,
+            cmap=cmap,
+            s=s,
+            alpha=alpha,
+            label=None
+        )
 
+    # Add legend for superpopulations
+    handles = []
+    labels = []
+    for i, sp in enumerate(categories):
+        if isinstance(cmap, dict):
+            color = cmap[sp]
+        else:
+            color = plt.get_cmap(cmap)(i)
+        handles.append(plt.Line2D([0], [0], marker='o', color='w',
+                                  markerfacecolor=color, markersize=8))
+        labels.append(sp)
+    plt.legend(handles, labels, title=color_col, bbox_to_anchor=(1.05, 1), loc='upper left')
 
-
-def get_variant_freqs(vcf_path,
-                      contig=None,
-                      start=None,
-                      end=None,
-                      attrs=["CHROM", "POS", "REF", "ALT"],
-                      info=["AF","EAS_AF","EUR_AF","AFR_AF","AMR_AF","SAS_AF"],
-                      progress=True,
-                      **kwargs): 
-    from genoray import VCF 
-    vcf = VCF(vcf_path)
-    vcf_df = vcf.get_record_info(contig=contig,
-                                 start=start, 
-                                 end=end,
-                                 attrs=attrs,
-                                 info=info,
-                                 progress=progress,
-                                 **kwargs)
-    return vcf_df
-
-
-def get_variant_freqs_genomewide(input_path="ALL.*.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.vcf.gz",
-                                 output_path="ALL.shapeit2_integrated_snvindels_v2a_27022019.GRCh38.phased.freqs.parquet",
-                                 key=DEFAULT_KEY,
-                                attrs=["CHROM", "POS", "REF", "ALT"],
-                                info=["AF","EAS_AF","EUR_AF","AFR_AF","AMR_AF","SAS_AF"],
-                                progress=True, 
-                                melt=False): 
-    import polars as pl
-
-    cache = _get_cache_dir(key)
-
-    input_path = os.path.join(cache, input_path)
-    output_path = os.path.join(cache, output_path)
-    if os.path.exists(output_path):
-        print(f"Reading from {output_path}")
-        freqs_df = pl.read_parquet(output_path)
-        if melt:
-            freqs_df = cv.df_to_bed(freqs_df, 
-                                    extra_cols=info,
-                                    extract_ids=False, 
-                                    simplify=False,
-                                    variant_name_alias="site")
-            freqs_df = melt_variant_freqs(freqs_df, on=info)
-        return freqs_df
-    
-    
-    # cache_freqs = os.path.join(
-    #     _get_cache_dir(key), 
-    #     "ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites_freqs.parquet")
-    # if os.path.exists(cache_freqs):
-    #     return pd.read_parquet(cache_freqs)
-    
-
-    # vcf_path = pooch.retrieve("https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz",
-    #             fname="ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz",
-    #         known_hash="381d2eceacd38edbd1c3d11774ec066cc3b4fcbf76a046159adef5446443b7f2")
-    # tbi_path = pooch.retrieve("https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz.tbi",
-    #                     fname="ALL.wgs.phase3_shapeit2_mvncall_integrated_v5c.20130502.sites.vcf.gz.tbi",
-    #             known_hash="6d162169c89fa538111654aaf61854a1dd498865408c01edd956222baeacbbf2")
-
-    # vcf_df = get_variant_freqs(vcf_path,
-    #                            attrs=attrs,
-    #                            info=info,
-    #                            progress=progress)
-    # print("Caching -->", cache_freqs)
-    # vcf_df.to_parquet(cache_freqs)
-    # return vcf_df 
-    vcf_files = glob.glob(input_path) 
-    print(f"Processing {len(vcf_files)} VCF files")
-    vcf_df = pl.concat([get_variant_freqs(vcf_path =vcf_file, attrs=attrs, info=info, progress=progress) for vcf_file in vcf_files])
-    print(f"Writing to {output_path}")
-    vcf_df.write_parquet(output_path)
-    return vcf_df
-
-
-def melt_variant_freqs(vcf_df,
-                       index=["chrom", "chromStart", "chromEnd", "REF", "ALT", "site"],
-                       on=["AF", "EAS_AF", "EUR_AF", "AFR_AF", "AMR_AF", "SAS_AF"],
-                       variable_name="Super Population",
-                       value_name="AF",
-                       global_af_col="REF"):
-
-    print("Melting variant freqs")
-    freqs_df = vcf_df.unpivot(
-        index=index,
-        on=on,
-        variable_name=variable_name,
-        value_name=value_name
-    )
-    freqs_df = freqs_df.with_columns(
-        pl.when(pl.col(variable_name) == "AF")
-        .then(pl.lit(global_af_col))
-        .otherwise(pl.col(variable_name))
-        .alias(variable_name)
-    )
-    freqs_df = freqs_df.with_columns(pl.col(variable_name).str.replace("_AF", "")) 
-    return freqs_df
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    # plt.show()

@@ -136,6 +136,13 @@ def get_superpop_palette(values=['AFR', 'AMR', 'EAS', 'EUR',
     cmap["REF"] = "grey"
     return cmap
 
+
+def get_ref_nonref_palette():
+    cmap = {"REF": "grey", 
+            "non-REF": "mediumslateblue", 
+            "All": "darkslateblue"}
+    return cmap
+
 def save_json(obj,
               save_path,
               verbose=True,

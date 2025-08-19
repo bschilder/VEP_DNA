@@ -1,0 +1,17 @@
+name: xarray
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python
+  - cupy-xarray
+  - xarray  
+  - zarr  
+  - dask  
+  ## Necessary for Elzar HPC
+  - gcc
+  - libgcc
+  - libstdcxx-ng 
+  - pip
+  - pip: 
+      - ipykernel
