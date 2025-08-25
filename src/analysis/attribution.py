@@ -245,3 +245,4 @@ def plot_clinsig_interaction_strength(
     ax.spines['right'].set_visible(False)
 
     return {'fig': plt.gcf(), 'ax': ax, 'data': bar_df}
+

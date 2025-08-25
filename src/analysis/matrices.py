@@ -139,18 +139,23 @@ def bin_matrix_col(X, bin_size=10, agg_func=np.nanmax):
 
 def bin_matrix_row(X, bin_size=10, agg_func=np.nanmax):
     """
-    Bin the rows of a DataFrame X into bins of size bin_size by summing within each bin.
-    Returns a DataFrame with the same columns, and binned rows.
+    Bin the rows of a DataFrame X into bins of size bin_size by aggregating within each bin.
+    Returns a DataFrame with the same columns, and binned rows as index.
     """
     n_rows = X.shape[0]
     n_bins = (n_rows + bin_size - 1) // bin_size  # ceiling division
-    binned_data = {}
+    binned_rows = []
+    binned_index = []
     for i in range(n_bins):
         start = i * bin_size
         end = min((i + 1) * bin_size, n_rows)
         row_slice = X.iloc[start:end, :]
-        binned_data[f"bin{i}"] = agg_func(row_slice, axis=0)
-    binned_df = pd.DataFrame(binned_data, columns=X.columns)
+        binned_rows.append(agg_func(row_slice, axis=0))
+        binned_index.append(f"bin{i}")
+    if len(binned_rows) == 0:
+        # Return empty DataFrame with same columns if input is empty
+        return pd.DataFrame(columns=X.columns)
+    binned_df = pd.DataFrame(binned_rows, columns=X.columns, index=binned_index)
     return binned_df
 
 
@@ -905,3 +910,5 @@ def minmax_normalize_numpy(X):
     X_max = np.nanmax(X, axis=1, keepdims=True)
     X = (X - X_min) / (X_max - X_min + 1e-8)
     return X
+
+ 
