@@ -1,5 +1,3 @@
-import src.utils as utils
-
 import os
 import pandas as pd
 import genvarloader as gvl
@@ -9,8 +7,13 @@ import numba as nb
 import pooch
 from tqdm.auto import tqdm
 from typing import Literal
+from numpy.typing import NDArray
+from hirola import HashTable
 
 from genoray._vcf import INT64_MAX
+
+import src.utils as utils
+
 
 
 def prepare_example(save_dir="/grid/koo/home/schilder/projects/GenomeEncoder/data/gvl",
@@ -920,3 +923,97 @@ def get_n_variants_agg(ds,
         raise AttributeError("The provided object 'ds' does not have a callable 'n_variants' method.")
     
     return agg_func(ds.n_variants().squeeze().flatten())
+
+
+def get_haplotype_ids(ds, hap_matrix):
+    """
+    Flatten the index: use "sample_ploid" as a single string index.
+
+    Args:
+        ds: Dataset object with .samples and .ploidy attributes.
+        hap_matrix: The haplotype matrix (to determine the number of rows).
+
+    Returns:
+        flat_index: List of strings in the format "sample_ploid".
+    """
+    n_samples = len(ds.samples)
+    n_ploidy = ds.ploidy if hasattr(ds, "ploidy") else 2
+    sample_index = np.repeat(ds.samples, n_ploidy)[:hap_matrix.shape[0]]
+    ploid_index = np.tile(list(range(n_ploidy)), n_samples)[:hap_matrix.shape[0]]
+    flat_index = [f"{s}_{p}" for s, p in zip(sample_index, ploid_index)]
+    return flat_index
+
+def get_variant_ids(ds, v_idxs):
+    """
+    Generate wild type (WT) variant IDs in the format "POS>ALT" for the given variant indices.
+
+    Args:
+        ds: Dataset object containing variant information. Must have
+            ds._seqs.variants.info["POS"] (positions) and
+            ds._seqs.variants.alts (alternate alleles).
+        v_idxs: Array-like of variant indices (can contain duplicates).
+
+    Returns:
+        np.ndarray: Array of strings, each representing a variant as "POS>ALT".
+
+    Example:
+        >>> ids = get_variant_ids(ds, [0, 1, 2])
+        >>> print(ids)
+        ['12345>A' '12346>G' '12347>T']
+    """
+    uniq_idxs = np.unique(v_idxs)
+    pos = ds._seqs.variants.info["POS"][uniq_idxs]
+    alts = ds._seqs.variants.alts.to_numpy()[uniq_idxs]
+    pos_str = pos.astype(str)
+    alts_str = alts.astype(str)
+    nms = np.char.add(pos_str, np.char.add(">", alts_str))
+    return nms
+
+def get_hap_matrix(
+    v_idxs: NDArray[np.integer], offsets: NDArray[np.integer]
+) -> tuple[NDArray[np.integer], NDArray[np.int32], NDArray[np.uint32], NDArray[np.bool_]]:
+    if offsets.ndim == 1:
+        n_slices = len(offsets) - 1
+        start_offs = offsets[:-1]
+        end_offs = offsets[1:]
+    elif offsets.ndim == 2:
+        n_slices = offsets.shape[1]
+        start_offs = offsets[0]
+        end_offs = offsets[1]
+    else:
+        raise ValueError(f"offsets must be 1D or 2D, got {offsets.ndim}D")
+
+    hap_ids = dict()
+    hap_id_nr = dict()
+    hap_membership = np.empty(n_slices, dtype=np.uint32)
+    n_hap_ids = 0
+    for o_idx in tqdm(range(n_slices)):
+        o_s = start_offs[o_idx]
+        o_e = end_offs[o_idx]
+        _v_idxs = v_idxs[o_s:o_e]
+        byts = _v_idxs.tobytes()
+        if byts not in hap_ids:
+            hap_ids[byts] = _v_idxs
+            hap_id_nr[byts] = n_hap_ids
+            n_hap_ids += 1
+        hap_membership[o_idx] = hap_id_nr[byts]
+
+    n_rows = len(hap_ids)
+    
+    hap_id_lens = np.array([len(h) for h in hap_ids.values()])
+    hap_id_offsets = np.empty(n_rows + 1, dtype=np.int32)
+    hap_id_offsets[0] = 0
+    hap_id_offsets[1:] = np.cumsum(hap_id_lens)
+    hap_ids = np.concatenate(list(hap_ids.values()))
+
+    uniq_v_idxs = np.unique(v_idxs)
+    n_cols = len(uniq_v_idxs)
+    hap_matrix = np.zeros((n_rows, n_cols), dtype=np.bool_)
+    htable = HashTable(n_cols * 2, dtype=uniq_v_idxs.dtype)
+    htable.add(uniq_v_idxs)
+    for i in tqdm(range(n_rows)):
+        o_s = hap_id_offsets[i]
+        o_e = hap_id_offsets[i+1]
+        hap_matrix[i, htable.get(hap_ids[o_s:o_e])] = True
+
+    return hap_ids, hap_id_offsets, hap_membership, hap_matrix

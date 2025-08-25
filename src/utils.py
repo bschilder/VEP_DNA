@@ -425,6 +425,38 @@ def sort_by_reverse_string(df,
     
     return df
 
+
+
+def sort_by_clinsig(df,
+                    clinsig_col='clinsig',
+                    clinsig_order=get_clinsig_palette().keys(),
+                    ascending=True
+                    ):
+    """
+    Sort a DataFrame by clinical significance values in a specified order.
+    
+    Args:
+        df (pd.DataFrame): Input DataFrame to sort
+        clinsig_col (str): Name of column containing clinical significance values
+        clinsig_order (list): List of clinical significance values in desired order
+        ascending (bool): Whether to sort in ascending order
+        
+    Returns:
+        pd.DataFrame: Sorted DataFrame
+        
+    Example:
+        >>> df = pd.DataFrame({'clinsig': ['Pathogenic', 'Benign', 'VUS']})
+        >>> sort_by_clinsig(df, clinsig_order=['Benign', 'VUS', 'Pathogenic'])
+           clinsig
+        1   Benign
+        2      VUS
+        0  Pathogenic
+    """
+    return df.sort_values(
+        by=clinsig_col,
+        key=lambda x: x.map({k: i for i, k in enumerate(list(clinsig_order))}),
+        ascending=ascending
+
 def one_hot_seq(seq: str, 
                 transpose: bool = True,
                 **kwargs) -> np.ndarray:

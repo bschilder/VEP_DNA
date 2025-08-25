@@ -127,6 +127,7 @@ def enrichment_to_dict(
     
     # Create dict
     return res_df.groupby(key_col, sort=False, observed=True)[value_col].mean().to_dict()
+
 def enrichment_to_matrix(
     res_df,
     index_col="query",
