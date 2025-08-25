@@ -120,6 +120,40 @@ def average_matrices(matrices,
     else:
         return sum(weights[i] * matrices[i] for i in range(len(matrices))) / sum(weights)
 
+
+def bin_matrix_col(X, bin_size=10, agg_func=np.nanmax):
+    """
+    Bin the columns of a DataFrame X into bins of size bin_size by summing within each bin.
+    Returns a DataFrame with the same index, and binned columns.
+    """
+    n_cols = X.shape[1]
+    n_bins = (n_cols + bin_size - 1) // bin_size  # ceiling division
+    binned_data = {}
+    for i in range(n_bins):
+        start = i * bin_size
+        end = min((i + 1) * bin_size, n_cols)
+        col_slice = X.iloc[:, start:end]
+        binned_data[f"bin{i}"] = agg_func(col_slice, axis=1)
+    binned_df = pd.DataFrame(binned_data, index=X.index)
+    return binned_df
+
+def bin_matrix_row(X, bin_size=10, agg_func=np.nanmax):
+    """
+    Bin the rows of a DataFrame X into bins of size bin_size by summing within each bin.
+    Returns a DataFrame with the same columns, and binned rows.
+    """
+    n_rows = X.shape[0]
+    n_bins = (n_rows + bin_size - 1) // bin_size  # ceiling division
+    binned_data = {}
+    for i in range(n_bins):
+        start = i * bin_size
+        end = min((i + 1) * bin_size, n_rows)
+        row_slice = X.iloc[start:end, :]
+        binned_data[f"bin{i}"] = agg_func(row_slice, axis=0)
+    binned_df = pd.DataFrame(binned_data, columns=X.columns)
+    return binned_df
+
+
 def bin_matrix(X, bin_size=10, agg_func=np.nanmax):
     """
     Bin a matrix by aggregating values within bins of specified size.

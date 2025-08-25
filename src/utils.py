@@ -425,8 +425,6 @@ def sort_by_reverse_string(df,
     
     return df
 
-
-
 def sort_by_clinsig(df,
                     clinsig_col='clinsig',
                     clinsig_order=get_clinsig_palette().keys(),
@@ -456,6 +454,7 @@ def sort_by_clinsig(df,
         by=clinsig_col,
         key=lambda x: x.map({k: i for i, k in enumerate(list(clinsig_order))}),
         ascending=ascending
+    )
 
 def one_hot_seq(seq: str, 
                 transpose: bool = True,

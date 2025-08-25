@@ -108,7 +108,7 @@ def wtvariants_to_vep_linear_model(
     interaction_df["clinical_variant"] = interaction_df["site"]
 
     if add_positions: 
-        interaction_df["wt_position"] = interaction_df["wt_variant"].str.split(">").str[0].astype(int)
+        interaction_df["wt_position"] = interaction_df["wt_variant"].str.split(":").str[1].str.split("-").str[0].astype(int)
         interaction_df["clinical_position"] = interaction_df["clinical_variant"].str.split(":").str[1].str.split("-").str[0].astype(int)
         interaction_df["position_distance"] = abs(interaction_df["wt_position"] - interaction_df["clinical_position"])
         
@@ -128,3 +128,120 @@ def wtvariants_to_vep_linear_model(
             "Xwt_clean": Xwt_clean, "y_vep_clean": y_vep_clean,
             "coef_matrix_signed": coef_matrix_signed_df, 
             "coef_matrix_abs": coef_matrix_abs_df}
+
+
+
+def plot_clinsig_interaction_strength(
+    ridge_df,
+    annot_df=None,
+    site_col="mutant",
+    agg_func="mean",
+    x="clinsig",    
+    y="interaction_strength",
+    palette=utils.get_clinsig_palette(),
+    title="Mean Interaction Strength per Clinical Variant",
+    xlabel="Clinical Significance",
+    ylabel="Interaction Strength",
+    figsize=(5, 5),
+    text_format="star",
+    show_test_name=False,
+    loc='inside',
+    verbose=0,
+    pvalue_format_string=" ({:.2g})",
+    test='Mann-Whitney',
+    annotator_kwargs=None,
+):
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from statannotations.Annotator import Annotator
+    from itertools import combinations
+
+    if annotator_kwargs is None:
+        annotator_kwargs = {}
+
+    # Prepare bar_df
+    if x in ridge_df.columns:
+        bar_df = ridge_df.groupby(["clinical_variant",x])[y].agg(agg_func).reset_index()
+    else:
+        if annot_df is None:
+            raise ValueError("annot_df is required when x is not in ridge_df.columns")
+        bar_df = ridge_df.groupby("clinical_variant")[y].agg(agg_func).reset_index().merge(
+            annot_df[[site_col, x]].drop_duplicates().rename(columns={site_col: "clinical_variant"})
+        )
+
+    # Standardize clinsig labels: replace underscores with spaces, expand "path" and "likely_path"
+    def clean_clinsig(clinsig):
+        clinsig = clinsig.replace("_", "\n")
+        if clinsig == "path":
+            return "pathogenic"
+        elif clinsig == "likely\npath":
+            return "likely\npathogenic"
+        return clinsig
+
+    bar_df[x] = bar_df[x].astype(str).apply(clean_clinsig)
+ 
+    # Remap palette keys to match cleaned clinsig labels
+    palette_cleaned = {}
+    for k, v in palette.items():
+        k_clean = k.replace("_", "\n")
+        if k_clean == "path":
+            k_clean = "pathogenic"
+        elif k_clean == "likely\npath":
+            k_clean = "likely\npathogenic"
+        palette_cleaned[k_clean] = v
+
+    plt.figure(figsize=figsize)
+
+    # Draw the boxplot
+    ax = sns.boxplot(
+        data=bar_df,
+        x=x,
+        y=y,
+        hue=x,
+        palette=palette_cleaned,
+        showfliers=False
+    )
+
+    # Set title and labels
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+    # Get the order of clinsig groups as plotted
+    clinsig_order = [t.get_text() for t in ax.get_xticklabels()]
+
+    # Compute mean interaction_strength for each clinsig group
+    means = bar_df.groupby(x)[y].mean()
+    # Sort clinsig groups by mean interaction_strength
+    sorted_clinsig = means.sort_values().index.tolist()
+
+    # Generate all pairwise combinations, sorted by distance between means (descending)
+    pairwise = list(combinations(sorted_clinsig, 2))
+    pairwise_sorted = sorted(pairwise, key=lambda pair: abs(means[pair[0]] - means[pair[1]]), reverse=True)
+
+    # Add statistical annotations
+    annotator = Annotator(
+        ax,
+        pairs=pairwise_sorted,
+        data=bar_df,
+        x=x,
+        y=y,
+        order=clinsig_order
+    )
+    annotator.configure(
+        test=test,
+        text_format=text_format,
+        loc=loc,
+        verbose=verbose,
+        show_test_name=show_test_name,
+        pvalue_format_string=pvalue_format_string,
+        **annotator_kwargs
+    )
+    annotator.apply_and_annotate()
+
+    plt.tight_layout()
+    # Remove the top and right spines (lines) from the plot margin
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    return {'fig': plt.gcf(), 'ax': ax, 'data': bar_df}
