@@ -129,8 +129,9 @@ def get_clinsig_palette(values=['path', 'likely_path', 'likely_benign', 'benign'
     """
     return make_palette(values, palette) 
 
-def get_superpop_palette(values=['AFR', 'AMR', 'EAS', 'EUR', 
-                                 'SAS', "CSA", "MID", "OCE"],
+def get_superpop_palette(values=['AFR', 'AMR', 'CSA', 
+                                 'EAS', 'EUR', 'MID',
+                                   'OCE', 'SAS'],
                         palette='Set3'):
     cmap = make_palette(values, palette)
     cmap["REF"] = "grey"
@@ -663,7 +664,7 @@ def vep_to_matrix(
     site_col="site",
     ploid_col="ploid",
     value_col="VEP",
-    fill_value="mean",
+    fill_value=None,
     duplicate_ref_hap=True,
     verbose=True
 ):
@@ -882,3 +883,56 @@ topo_colorscale = [
                     [0.90, "#5c3a21"],   # deep brown (shale)
                     [1.00, "#ffffff"],   # white (snow)
                 ]
+
+
+
+
+def minmax_normalize(X, procedure=["rows", "cols"], verbose=True):
+    """
+    Min-max normalize a matrix by columns and/or rows in a specified order.
+    Args:
+        X: Matrix to normalize (pd.DataFrame or np.ndarray)
+        procedure: List of procedures to apply. Can be "rows" or "cols".
+    Returns:
+        Normalized matrix
+    """
+
+    if not isinstance(X, pd.DataFrame) and isinstance(X, np.ndarray):
+        X = pd.DataFrame(X)    
+
+    def normalize_rows(X):
+        X = X.sub(X.min(axis=1), axis=0)
+        X = X.div(X.max(axis=1), axis=0)
+        return X
+    
+    def normalize_cols(X):
+        X = X.sub(X.min(axis=0), axis=1)
+        X = X.div(X.max(axis=0), axis=1)
+        return X
+    
+    for proc in procedure:
+        if proc == "rows":
+            if verbose:
+                print("Normalizing rows")
+            X = normalize_rows(X)
+        elif proc == "cols":
+            if verbose:
+                print("Normalizing columns")
+            X = normalize_cols(X)
+        else:
+            raise ValueError(f"Invalid procedure: {proc}")
+    return X
+
+
+def minmax_normalize_numpy(X):
+    """
+    Min-max normalize a matrix by columns and/or rows in a specified order.
+    Args:
+        X: Matrix to normalize (pd.DataFrame or np.ndarray)
+    Returns:
+        Normalized matrix
+    """
+    X_min = np.nanmin(X, axis=1, keepdims=True)
+    X_max = np.nanmax(X, axis=1, keepdims=True)
+    X = (X - X_min) / (X_max - X_min + 1e-8)
+    return X

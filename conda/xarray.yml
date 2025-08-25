@@ -7,7 +7,12 @@ dependencies:
   - cupy-xarray
   - xarray  
   - zarr  
-  - dask  
+  - h5netcdf
+  - dask
+  - pandas  
+  - polars
+  - pooch
+  - tqdm
   ## Necessary for Elzar HPC
   - gcc
   - libgcc
