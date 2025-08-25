@@ -1,3 +1,4 @@
+import re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -185,10 +186,17 @@ def bin_matrix(X, bin_size=10, agg_func=np.nanmax):
     n_bins = X.shape[0] // bin_size
     
     # Reshape into 4D array of bins, then aggregate along bin dimensions
-    return agg_func(
-        X[:n_bins*bin_size, :n_bins*bin_size].reshape(n_bins, bin_size, n_bins, bin_size), 
-        axis=(1,3)
-    )
+    # Fix for ValueError: ensure the input matrix is square before reshaping
+    min_dim = min(X.shape[0], X.shape[1])
+    n_bins = min_dim // bin_size
+    if n_bins == 0:
+        Xbinned = np.empty((0, 0))
+    else:
+        Xbinned = agg_func(
+            X[:n_bins*bin_size, :n_bins*bin_size].reshape(n_bins, bin_size, n_bins, bin_size),
+            axis=(1, 3)
+        )
+    return Xbinned
 
 def expand_matrix(X, target_size=None,
                   verbose=False):
@@ -912,3 +920,65 @@ def minmax_normalize_numpy(X):
     return X
 
  
+def fill_coordinates(df, 
+                     full_length,
+                     x_id_col='variant',
+                     y_id_col='mutant',
+                     x_pos_col='variant_position',
+                     y_pos_col='mutant_position',
+                     value_col='VEP',
+                     aggfunc='mean', 
+                     dropna=False,
+                     **kwargs):
+    """
+    Fill a coordinate matrix with values from a DataFrame, creating a complete grid of positions.
+    
+    Args:
+        df (pd.DataFrame): Input DataFrame containing the data in long format (one row per x-y coordinate)
+        x_id_col (str): Column name for x-axis identifiers
+        y_id_col (str): Column name for y-axis identifiers
+        x_pos_col (str): Column name for x-axis positions
+        y_pos_col (str): Column name for y-axis positions
+        value_col (str): Column name for the values to fill in the matrix
+        full_length (int): Length of the complete position range
+        aggfunc (str): Aggregation function to use for duplicate values
+        dropna (bool): Whether to drop NaN values
+        **kwargs: Additional arguments passed to pd.pivot_table
+        
+    Returns:
+        pd.DataFrame: Pivoted matrix with filled coordinates
+    """
+    # Select and deduplicate relevant columns
+    dat = df[[x_id_col, y_id_col, x_pos_col, y_pos_col, value_col]].drop_duplicates().copy()
+    
+    # Convert position columns to integers, handling NaN values
+    dat[x_pos_col] = dat[x_pos_col].astype('Int64')
+    dat[y_pos_col] = dat[y_pos_col].astype('Int64')
+
+    # Drop rows with NaN values in x_pos_col or y_pos_col
+    dat.dropna(subset=[x_pos_col, y_pos_col], inplace=True)
+
+    # Create complete range of positions
+    all_positions = pd.DataFrame({
+        y_pos_col: range(1, full_length + 1),
+        x_pos_col: range(1, full_length + 1)
+    })
+
+    # Merge with original data to include all positions
+    dat = pd.merge(
+        dat,
+        all_positions,
+        on=[y_pos_col, x_pos_col],
+        how='outer'
+    )
+
+    # Create pivoted matrix
+    X = dat.pivot_table(
+        index=x_pos_col, 
+        columns=y_pos_col, 
+        values=value_col, 
+        aggfunc=aggfunc, 
+        dropna=dropna,
+        **kwargs
+    )
+    return X
