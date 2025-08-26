@@ -69,10 +69,9 @@ def load_and_merge_data(processed_results_path, metadata_path):
         'position': 'int32',           # Genomic positions fit in int32
         'ref_allele': 'category',      # Categorical for efficiency
         'alt_allele': 'category',      # Categorical for efficiency
-        'sample_id': 'int16',          # Keep original for reference
-        'individual_id': 'category',   # Individual IDs as category
+        'sample': 'category',          # Keep original for reference
         'population': 'category',      # Population as category
-        'super_population': 'category', # Super population as category
+        'superpopulation': 'category', # Super population as category
         'hap_id': 'int8',              # Binary 0/1 - perfect for int8
         'flag': 'int8',                # Small integers fit in int8
         'max_delta_score': 'float16',  # Reduced precision for memory

@@ -974,6 +974,36 @@ def get_merged_hap_xr(
     unique_haplotypes: bool = False,
     verbose: bool = True,
 ):
+    """
+    Merge haplotype data from a VCF and a gvl.Dataset for specified regions and samples.
+
+    This function extracts and merges haplotype information from the provided VCF and gvl.Dataset
+    objects, optionally restricting to specific genomic regions and/or samples. The merged haplotype
+    matrix is constructed by intersecting genotype indices across the selected regions and samples.
+
+    !IMPORTANT!: For this to be accurate, the GVL Dataset must be derived from an SVAR file (as opposed to a VCF)
+    so that the genotypes are parsimonious.
+
+    Args:
+        vcf (VCF): The VCF object containing variant and genotype data. Must have a loaded .gvi index.
+        ds (gvl.Dataset): The genvarloader Dataset containing haplotype and sample information.
+        regions (optional): Genomic regions to include. If None, all regions are used.
+        samples (optional): Samples to include. If None, all samples are used.
+        unique_haplotypes (bool, optional): If True, only unique haplotypes are retained. Default is False.
+        verbose (bool, optional): If True, prints progress and status messages. Default is True.
+
+    Returns:
+        xarray.DataArray: The merged haplotype matrix as an xarray object.
+
+    Raises:
+        ValueError: If the VCF index is not loaded or if merging cannot be performed due to insufficient regions.
+        AssertionError: If the dataset does not contain haplotype sequences or ploidy information.
+
+    Notes:
+        - The VCF must have a loaded .gvi index (not .csi or .tbi).
+        - The function expects ds._seqs to be of type Haps and ds.ploidy to be set.
+        - The merged haplotype matrix will have variants as columns and haplotypes as rows.
+    """
     from genvarloader._dataset._reconstruct import Haps
     import xarray as xr
 

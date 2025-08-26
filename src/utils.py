@@ -676,12 +676,12 @@ def add_variant_name(df,
         pl.col(start_col).cast(pl.Utf8),
         pl.lit('-'),
         pl.when(pl.lit(end_col).is_null())
-        .then((pl.col(start_col).cast(pl.Int32) + pl.col(ref_col).str.len_chars()).cast(pl.Int32))
+        .then((pl.col(start_col).cast(pl.Int32) + pl.col(ref_col).cast(pl.Utf8).str.len_chars()).cast(pl.Int32))
         .otherwise(pl.col(end_col).cast(pl.Utf8) if end_col is not None else pl.col(start_col).cast(pl.Utf8)),
         pl.lit('_'),
-        pl.col(ref_col),
+        pl.col(ref_col).cast(pl.Utf8),
         pl.lit('_'),
-        pl.col(alt_col)
+        pl.col(alt_col).cast(pl.Utf8)
     ]).alias(alias))
     
     if was_pandas:
