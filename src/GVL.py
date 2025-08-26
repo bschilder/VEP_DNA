@@ -7,9 +7,9 @@ import numba as nb
 import pooch
 from tqdm.auto import tqdm
 from typing import Literal
-from numpy.typing import NDArray
 from hirola import HashTable
-
+import awkward as ak
+from genoray import VCF
 from genoray._vcf import INT64_MAX
 
 import src.utils as utils
@@ -925,53 +925,104 @@ def get_n_variants_agg(ds,
     return agg_func(ds.n_variants().squeeze().flatten())
 
 
-def get_haplotype_ids(ds, hap_matrix):
+def get_haplotype_ids(hap_matrix):
     """
     Flatten the index: use "sample_ploid" as a single string index.
 
     Args:
-        ds: Dataset object with .samples and .ploidy attributes.
         hap_matrix: The haplotype matrix (to determine the number of rows).
 
     Returns:
         flat_index: List of strings in the format "sample_ploid".
     """
-    n_samples = len(ds.samples)
-    n_ploidy = ds.ploidy if hasattr(ds, "ploidy") else 2
-    sample_index = np.repeat(ds.samples, n_ploidy)[:hap_matrix.shape[0]]
-    ploid_index = np.tile(list(range(n_ploidy)), n_samples)[:hap_matrix.shape[0]]
-    flat_index = [f"{s}_{p}" for s, p in zip(sample_index, ploid_index)]
-    return flat_index
+    return np.array([ f"{sid}_{i%2}" for i, sid in enumerate(np.repeat(hap_matrix["sample"].values, 2)) ])
 
-def get_variant_ids(ds, v_idxs):
+def get_variant_ids(hap_matrix):
     """
-    Generate wild type (WT) variant IDs in the format "POS>ALT" for the given variant indices.
+    Generate wild type (WT) variant IDs in the format "chrPOS:START-END_REF_ALT" for the given variant indices.
 
     Args:
-        ds: Dataset object containing variant information. Must have
-            ds._seqs.variants.info["POS"] (positions) and
-            ds._seqs.variants.alts (alternate alleles).
-        v_idxs: Array-like of variant indices (can contain duplicates).
+        hap_matrix: xarray.Dataset containing variant information. Must have
+            "Chromosome", "Start", "End", "REF", and "ALT" columns.
 
     Returns:
-        np.ndarray: Array of strings, each representing a variant as "POS>ALT".
+        np.ndarray: Array of strings, each representing a variant as "chrPOS:START-END_REF_ALT".
 
     Example:
-        >>> ids = get_variant_ids(ds, [0, 1, 2])
+        >>> ids = get_variant_ids(hap_matrix)
         >>> print(ids)
-        ['12345>A' '12346>G' '12347>T']
+        ['chr1:100-200_A_G' 'chr1:200-300_C_T' 'chr1:300-400_G_A']
     """
-    uniq_idxs = np.unique(v_idxs)
-    pos = ds._seqs.variants.info["POS"][uniq_idxs]
-    alts = ds._seqs.variants.alts.to_numpy()[uniq_idxs]
-    pos_str = pos.astype(str)
-    alts_str = alts.astype(str)
-    nms = np.char.add(pos_str, np.char.add(">", alts_str))
-    return nms
+    return np.array([
+        f"chr{chrom}:{start}-{end}_{ref}_{alt}"
+        for chrom, start, end, ref, alt in zip(
+            hap_matrix["Chromosome"].values,
+            hap_matrix["Start"].values,
+            hap_matrix["End"].values,
+            hap_matrix["REF"].values,
+            hap_matrix["ALT"].values
+        )
+    ])
 
-def get_hap_matrix(
-    v_idxs: NDArray[np.integer], offsets: NDArray[np.integer]
-) -> tuple[NDArray[np.integer], NDArray[np.int32], NDArray[np.uint32], NDArray[np.bool_]]:
+
+
+def get_merged_hap_xr(
+    vcf: VCF,
+    ds: gvl.Dataset,
+    regions=None,
+    samples=None,
+    unique_haplotypes: bool = False,
+    verbose: bool = True,
+):
+    from genvarloader._dataset._reconstruct import Haps
+    import xarray as xr
+
+    if vcf._index is None:
+        raise ValueError(
+            "VCF **genoray** index (.gvi, not .csi or .tbi) must exist and be loaded."
+            + " Call vcf._write_gvi_index() and vcf._load_index() to create and load it."
+        )
+    if verbose:
+        print("[get_merged_hap_xr] VCF index loaded and validated.")
+
+    assert isinstance(ds._seqs, Haps)
+    assert ds.ploidy is not None
+
+    if regions is None:
+        regions = slice(None)
+    if samples is None:
+        samples = slice(None)
+
+    if verbose:
+        print("[get_merged_hap_xr] Parsing index for regions and samples.")
+
+    ds_idx, _, reshape = ds._idxer.parse_idx((regions, samples))
+    if reshape is None:
+        raise ValueError("Need multiple regions to perform a merge.")
+    ds_idx = ds_idx.reshape(reshape)
+    r_idx, s_idx = np.unravel_index(ds_idx, ds.full_shape)
+    genos = ds._seqs.genotypes[r_idx, s_idx]
+
+    if verbose:
+        print("[get_merged_hap_xr] Calculating intersection of genotypes.")
+
+    min_idx = ak.max(genos[..., [0]], 0, keepdims=True, mask_identity=False)
+    max_idx = ak.min(genos[..., [-1]], 0, keepdims=True, mask_identity=False)
+    mask = (min_idx <= genos) & (genos <= max_idx)
+    intersection = gvl.Ragged(
+        ak.without_parameters(ak.to_regular(ak.to_regular(genos[mask], 1), 2))
+    )
+    # all regions are the same now, select first
+    intersection = intersection[0]
+    reshape = reshape[1:]
+    v_idxs = intersection.data
+    offsets = intersection.offsets
+
+    if verbose:
+        print(f"[get_merged_hap_xr] Found {len(np.unique(v_idxs))} unique variant indices.")
+
+    col_v_idxs = np.unique(v_idxs)
+
     if offsets.ndim == 1:
         n_slices = len(offsets) - 1
         start_offs = offsets[:-1]
@@ -983,11 +1034,14 @@ def get_hap_matrix(
     else:
         raise ValueError(f"offsets must be 1D or 2D, got {offsets.ndim}D")
 
+    if verbose:
+        print(f"[get_merged_hap_xr] Building haplotype ID dictionaries for {n_slices} slices.")
+
     hap_ids = dict()
     hap_id_nr = dict()
     hap_membership = np.empty(n_slices, dtype=np.uint32)
     n_hap_ids = 0
-    for o_idx in tqdm(range(n_slices)):
+    for o_idx in range(n_slices):
         o_s = start_offs[o_idx]
         o_e = end_offs[o_idx]
         _v_idxs = v_idxs[o_s:o_e]
@@ -998,22 +1052,76 @@ def get_hap_matrix(
             n_hap_ids += 1
         hap_membership[o_idx] = hap_id_nr[byts]
 
-    n_rows = len(hap_ids)
-    
+    n_uniq_haps = len(hap_ids)
+
+    if verbose:
+        print(f"[get_merged_hap_xr] {n_uniq_haps} unique haplotypes identified.")
+
     hap_id_lens = np.array([len(h) for h in hap_ids.values()])
-    hap_id_offsets = np.empty(n_rows + 1, dtype=np.int32)
+    hap_id_offsets = np.empty(n_uniq_haps + 1, dtype=np.int64)
     hap_id_offsets[0] = 0
     hap_id_offsets[1:] = np.cumsum(hap_id_lens)
     hap_ids = np.concatenate(list(hap_ids.values()))
 
-    uniq_v_idxs = np.unique(v_idxs)
-    n_cols = len(uniq_v_idxs)
-    hap_matrix = np.zeros((n_rows, n_cols), dtype=np.bool_)
-    htable = HashTable(n_cols * 2, dtype=uniq_v_idxs.dtype)
-    htable.add(uniq_v_idxs)
-    for i in tqdm(range(n_rows)):
+    n_uniq_vars = len(col_v_idxs)
+    if verbose:
+        print(f"[get_merged_hap_xr] Building haplotype matrix of shape ({n_uniq_haps}, {n_uniq_vars}).")
+
+    hap_matrix = np.zeros((n_uniq_haps, n_uniq_vars), dtype=np.bool_)
+    htable = HashTable(n_uniq_vars * 2, dtype=col_v_idxs.dtype)
+    htable.add(col_v_idxs)
+    for i in range(n_uniq_haps):
         o_s = hap_id_offsets[i]
-        o_e = hap_id_offsets[i+1]
+        o_e = hap_id_offsets[i + 1]
         hap_matrix[i, htable.get(hap_ids[o_s:o_e])] = True
 
-    return hap_ids, hap_id_offsets, hap_membership, hap_matrix
+    if reshape is not None:
+        hap_membership = hap_membership.reshape(*reshape, ds.ploidy)
+    else:
+        hap_membership = hap_membership.reshape(-1, ds.ploidy)
+
+    hap_ids = gvl.Ragged.from_offsets(
+        hap_ids, (len(hap_id_offsets) - 1, None), hap_id_offsets
+    )
+
+    if not unique_haplotypes:
+        if verbose:
+            print("[get_merged_hap_xr] Expanding haplotype matrix to all haplotypes (not unique only).")
+        hap_matrix = hap_matrix[hap_membership]
+
+    if verbose:
+        print("[get_merged_hap_xr] Extracting variant metadata.")
+
+    meta = vcf._index.df[col_v_idxs].select(
+        Chromosome=pl.from_pandas(vcf._index.gr.Chromosome.iloc[col_v_idxs]),
+        Start=pl.col("POS") - 1,
+        End=pl.col("POS") + pl.col("ILEN").list.get(0).clip(upper_bound=0),
+        REF=pl.col("REF"),
+        ALT=pl.col("ALT").list.get(0),
+    ).to_pandas()
+    meta.index.name = 'variant'
+    meta = meta.to_xarray()
+
+    if verbose:
+        print("[get_merged_hap_xr] Constructing xarray DataArray and merging metadata.")
+
+    # (s p v)
+    hap_matrix = xr.DataArray(
+        hap_matrix,
+        dims=("sample", "ploid", "variant"),
+        coords={"sample": ds.subset_to(samples=samples).samples},
+        name='hap_matrix'
+    ).to_dataset()
+    hap_matrix = hap_matrix.merge(meta)
+
+    if verbose:
+        print("[get_merged_hap_xr] Done.")
+
+    return hap_ids, hap_membership, hap_matrix, col_v_idxs
+
+
+def hap_xr_to_df(hap_matrix, **kwargs):
+    return pd.DataFrame(hap_matrix["hap_matrix"].values.reshape(-1, hap_matrix.sizes["variant"]), 
+                        index=get_haplotype_ids(hap_matrix), 
+                        columns=get_variant_ids(hap_matrix),
+                        **kwargs)
