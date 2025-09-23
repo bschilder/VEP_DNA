@@ -11,6 +11,8 @@ from hirola import HashTable
 import awkward as ak
 from genoray import VCF
 from genoray._vcf import INT64_MAX
+import zipfile  
+from IPython.display import clear_output 
 
 import src.utils as utils
 
@@ -1155,3 +1157,55 @@ def hap_xr_to_df(hap_matrix, **kwargs):
                         index=get_haplotype_ids(hap_matrix), 
                         columns=get_variant_ids(hap_matrix),
                         **kwargs)
+
+
+
+
+def load_gvl_datasets(gvl_zip_paths, window_size="variable", **kwargs):
+    """
+    Unzips and loads GVL datasets from a list of zip file paths.
+    Returns a dictionary of {key: gvl.Dataset}.
+    """
+    datasets = {}
+    for zip_path in gvl_zip_paths:
+        extract_dir = zip_path.replace(".zip", "")
+        # Unzip if not already unzipped
+        if not os.path.exists(extract_dir):
+            os.makedirs(extract_dir, exist_ok=True)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+                print(f"Extracted zip to {extract_dir}")
+
+        # Find all folders matching chr*_dataset.gvl/ in the extracted directory
+        chr_gvl_folders = [
+            f for f in os.listdir(extract_dir)
+            if f.endswith('_dataset.gvl') and f.startswith('chr')
+        ]
+
+        for folder in chr_gvl_folders:
+            folder_path = os.path.join(extract_dir, folder)
+            ds = gvl.Dataset.open(folder_path, **kwargs).with_seqs("annotated").with_len(window_size)
+            # Use a unique key for each dataset, e.g. include the parent directory name
+            key = f"{os.path.basename(extract_dir)}_{folder}"
+            datasets[key] = ds
+            print(f"Loaded dataset for {key}")
+            clear_output(wait=True)
+    return datasets
+
+def get_n_variants_df(datasets):
+    """
+    Given a dictionary of {key: gvl.Dataset}, returns a DataFrame with
+    columns: cohort, chrom, n_variants.
+    """ 
+    n_variants = []
+    for key, ds in tqdm(datasets.items()):
+        n_variants.append(pd.DataFrame(
+            {
+                "cohort": key.split("_")[0].upper(),
+                "chrom": ds.contigs[0],
+                # "sample": np.repeat(ds.samples, 2),  # Uncomment if needed
+                "n_variants": ds.n_variants().flatten()
+            }
+        ))
+    n_variants_df = pd.concat(n_variants)
+    return n_variants_df

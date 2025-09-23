@@ -420,7 +420,7 @@ def df_to_sites(vcf_df):
     return sites
 
 
-def bed_to_sites(bed):
+def bed_to_sites(bed, chrom_col="chrom", start_col="chromStart", end_col="chromEnd", ref_col="REF", alt_col="ALT"):
     """Convert BED DataFrame to sites format.
     
     Args:
@@ -430,11 +430,18 @@ def bed_to_sites(bed):
     Returns:
         DataFrame in sites format
     """
+    bed = bed.copy()
+    if isinstance(bed, pd.DataFrame):
+        bed = pl.DataFrame(bed)
+    
     sites =  bed.rename({
-        'chrom': 'CHROM',
-        'chromStart': 'POS',
-        'chromEnd': 'POS_END'
+        chrom_col: 'CHROM',
+        start_col: 'POS',
+        end_col: 'POS_END',
+        ref_col: 'REF',
+        alt_col: 'ALT'
     })
+    
 
     sites = sites.select([
         'CHROM',
@@ -443,6 +450,7 @@ def bed_to_sites(bed):
         'ALT',
         *[col for col in sites.columns if col not in ['CHROM', 'POS', 'REF', 'ALT']]
     ])
+    
     return sites
 
 def _extract_id_cols(df,

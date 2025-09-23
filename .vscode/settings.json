@@ -4,5 +4,6 @@
         "titleBar.activeBackground": "#583161",
         "titleBar.activeForeground": "#FBF9FC"
     },
-    "python.analysis.autoImportCompletions": true
+    "python.analysis.autoImportCompletions": true,
+    "cursorpyright.analysis.autoImportCompletions": true
 }
