@@ -138,10 +138,17 @@ def bin_matrix_col(X, bin_size=10, agg_func=np.nanmax):
     binned_df = pd.DataFrame(binned_data, index=X.index)
     return binned_df
 
-def bin_matrix_row(X, bin_size=10, agg_func=np.nanmax):
+def bin_matrix_row(X, bin_size=10, agg_func=np.nanmax, use_first_index=False):
     """
     Bin the rows of a DataFrame X into bins of size bin_size by aggregating within each bin.
     Returns a DataFrame with the same columns, and binned rows as index.
+
+    Args:
+        X (pd.DataFrame): Input DataFrame.
+        bin_size (int): Number of rows per bin.
+        agg_func (callable): Aggregation function to apply within each bin.
+        use_first_index (bool): If True, use the first index in each bin as the bin name; 
+                                otherwise, use "bin{i}".
     """
     n_rows = X.shape[0]
     n_bins = (n_rows + bin_size - 1) // bin_size  # ceiling division
@@ -152,7 +159,10 @@ def bin_matrix_row(X, bin_size=10, agg_func=np.nanmax):
         end = min((i + 1) * bin_size, n_rows)
         row_slice = X.iloc[start:end, :]
         binned_rows.append(agg_func(row_slice, axis=0))
-        binned_index.append(f"bin{i}")
+        if use_first_index and row_slice.shape[0] > 0:
+            binned_index.append(X.index[start])
+        else:
+            binned_index.append(f"bin{i}")
     if len(binned_rows) == 0:
         # Return empty DataFrame with same columns if input is empty
         return pd.DataFrame(columns=X.columns)
@@ -198,51 +208,68 @@ def bin_matrix(X, bin_size=10, agg_func=np.nanmax):
         )
     return Xbinned
 
-def expand_matrix(X, target_size=None,
-                  verbose=False):
+def expand_matrix(X, target_size=None, target_size_x=None, target_size_y=None, verbose=False):
     """
     Expand a binned matrix back to original dimensions by repeating values.
     
     Args:
         X (np.ndarray): Input binned matrix
-        target_size (int): Target size for the expanded matrix (default: 1863)
-        verbose (bool): Whether to print verbose output (default: True).
+        target_size (int, optional): Target size for both axes (default: None)
+        target_size_x (int, optional): Target size for the x-axis (rows)
+        target_size_y (int, optional): Target size for the y-axis (columns)
+        verbose (bool): Whether to print verbose output (default: False).
         
     Returns:
-        np.ndarray: Expanded matrix with dimensions (target_size, target_size)
+        np.ndarray: Expanded matrix with dimensions (target_size_x, target_size_y)
     """
-    if target_size is None:
-        target_size = X.shape[0]
-        if verbose:
-            print(f"No target size specified, using input size {target_size}")
+    # Determine target sizes for each axis
+    if target_size is not None:
+        target_size_x = target_size_x if target_size_x is not None else target_size
+        target_size_y = target_size_y if target_size_y is not None else target_size
+    else:
+        if target_size_x is None:
+            target_size_x = X.shape[0]
+        if target_size_y is None:
+            target_size_y = X.shape[1]
+        if verbose and target_size is None:
+            print(f"No target size specified, using input size {target_size_x}x{target_size_y}")
 
-    if X.shape[0] == target_size and X.shape[1] == target_size:
+    if X.shape[0] == target_size_x and X.shape[1] == target_size_y:
         if verbose:
-            print(f"Matrix already has target size {target_size}x{target_size}")
+            print(f"Matrix already has target size {target_size_x}x{target_size_y}")
         return X
-    
-    # Calculate expansion factor based on input and target sizes
-    input_size = X.shape[0]
-    expansion_factor = target_size // input_size
+
+    # Calculate expansion factors for each axis
+    input_size_x = X.shape[0]
+    input_size_y = X.shape[1]
+    expansion_factor_x = target_size_x // input_size_x if input_size_x > 0 else 1
+    expansion_factor_y = target_size_y // input_size_y if input_size_y > 0 else 1
 
     # Expand the binned matrix back to original dimensions by repeating values
-    expanded_matrix = np.repeat(np.repeat(X, expansion_factor, axis=0), expansion_factor, axis=1)
+    expanded_matrix = np.repeat(np.repeat(X, expansion_factor_x, axis=0), expansion_factor_y, axis=1)
 
-    # Ensure final dimensions are target_size x target_size by padding or truncating if necessary
-    current_size = expanded_matrix.shape[0]
+    # Ensure final dimensions are target_size_x x target_size_y by padding or truncating if necessary
+    current_size_x = expanded_matrix.shape[0]
+    current_size_y = expanded_matrix.shape[1]
 
-    if current_size < target_size:
-        # Pad with zeros if too small
+    # Pad if too small
+    pad_x = max(0, target_size_x - current_size_x)
+    pad_y = max(0, target_size_y - current_size_y)
+    if pad_x > 0 or pad_y > 0:
         if verbose:
-            print(f"Expanding x-axis by {target_size - current_size}")
-            print(f"Expanding y-axis by {target_size - current_size}")
-        expanded_matrix = np.pad(expanded_matrix, 
-                               ((0, target_size - current_size), 
-                                (0, target_size - current_size)), 
-                               mode='constant')
-    elif current_size > target_size:
-        # Truncate if too large
-        expanded_matrix = expanded_matrix[:target_size, :target_size]
+            if pad_x > 0:
+                print(f"Expanding x-axis by {pad_x}")
+            if pad_y > 0:
+                print(f"Expanding y-axis by {pad_y}")
+        expanded_matrix = np.pad(
+            expanded_matrix,
+            ((0, pad_x), (0, pad_y)),
+            mode='constant'
+        )
+
+    # Truncate if too large
+    if expanded_matrix.shape[0] > target_size_x or expanded_matrix.shape[1] > target_size_y:
+        expanded_matrix = expanded_matrix[:target_size_x, :target_size_y]
 
     return expanded_matrix
 

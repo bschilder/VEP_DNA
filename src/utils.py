@@ -113,6 +113,8 @@ def make_palette(values: list,
     import seaborn as sns
     return dict(zip(values, sns.color_palette(palette, len(values)).as_hex()))
 
+ 
+
 def get_clinsig_palette(values=['path', 'likely_path', 'likely_benign', 'benign'],
                          palette='bwr_r'):
     """
@@ -127,7 +129,13 @@ def get_clinsig_palette(values=['path', 'likely_path', 'likely_benign', 'benign'
     Returns:
         dict: Dictionary mapping each clinical significance value to a hex color code
     """
-    return make_palette(values, palette) 
+    palette = make_palette(values, palette) 
+    palette["VUS"] = "lightgray"
+    palette["vus"] = "lightgray"
+    palette["pathogenic"] = palette["path"]
+    palette["likely_pathogenic"] = palette["likely_path"]
+    return palette
+
 
 def get_superpop_palette(values=['AFR', 'AMR', 'CSA', 
                                  'EAS', 'EUR', 'MID',
@@ -967,3 +975,12 @@ def minmax_normalize_numpy(X):
     X_max = np.nanmax(X, axis=1, keepdims=True)
     X = (X - X_min) / (X_max - X_min + 1e-8)
     return X
+
+
+FIG_SAVE_KWARGS = {
+    "dpi":300, 
+    "bbox_inches":"tight", 
+    "transparent":True, 
+    "pad_inches":0.1, 
+    "facecolor":"None", 
+}

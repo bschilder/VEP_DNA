@@ -104,7 +104,7 @@ def vcf_to_df(
     if vcf_file is None:
         vcf_file = download_vcf()["vcf"]
 
-    if os.path.exists(cache) and not force:
+    if cache is not None and os.path.exists(cache) and not force:
         print(f"Reading from {cache}")
         return pl.read_parquet(cache)
 
@@ -144,8 +144,9 @@ def vcf_to_df(
     if extract_ids:
         vcf_df = _extract_id_cols(vcf_df)
 
-    print(f"Caching to {cache}")
-    vcf_df.write_parquet(cache)
+    if cache is not None:
+        print(f"Caching to {cache}")
+        vcf_df.write_parquet(cache)
 
     return vcf_df
 
