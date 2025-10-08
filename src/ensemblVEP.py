@@ -189,7 +189,7 @@ def filter_annotations(
     df_filters={"Location": "Location"},
     # cache_search=os.path.join(pooch.os_cache("pooch"), "clinvar_by_chrom", "clinvarVEP*"),
     cache_search=os.path.join(os.path.expanduser("~/projects/data/ensemblVEP"), "clinvarVEP*"),
-    cached_file=os.path.join(pooch.os_cache("pooch"), "cv_annot_SpliceVarDB_splicing.csv.gz"),
+    cached_file=None,
     force=False
 ):
     """
@@ -220,8 +220,9 @@ def filter_annotations(
             - "SIFT_score" and "PolyPhen_score": Extracted numeric scores from the respective columns.
             - "MaveDB_score_mean", "MaveDB_score_abs_mean", "MaveDB_score_min", "MaveDB_score_max": Statistics computed from comma-separated MaveDB scores.
     """
-    if os.path.exists(cached_file) and not force:
-        cv_annot = pd.read_csv(cached_file,  low_memory=False)
+    if cached_file is not None and os.path.exists(cached_file) and not force:
+        print(f"Reading from {cached_file}")
+        cv_annot = pd.read_parquet(cached_file)
     else:
         # Get all VEP annotation files in the cache directory
         cv_vep_files = glob.glob(cache_search)
@@ -253,32 +254,46 @@ def filter_annotations(
 
         # Merge and save all filtered annotations
         cv_annot = pd.concat(cv_annot)
-        print(f"Caching merged and filtered annotations --> {cached_file}")
-        cv_annot.to_csv(cached_file, index=False)
+        if cached_file is not None:
+            print(f"Caching merged and filtered annotations --> {cached_file}")
+            cv_annot.to_parquet(cached_file)
 
     # Extract numeric values from SIFT and PolyPhen columns using regex
+    print("Extracting numeric values from SIFT and PolyPhen columns")
     cv_annot['SIFT_score'] = cv_annot['SIFT'].str.extract(r'\(([\d.]+)\)').astype(float)
     cv_annot['PolyPhen_score'] = cv_annot['PolyPhen'].str.extract(r'\(([\d.]+)\)').astype(float)
 
     # Compute statistics from MaveDB_score column (comma-separated values)
+    print("Computing statistics from MaveDB_score column")
+    cv_annot['MaveDB_score'] = cv_annot['MaveDB_score'].astype(str)
+    def safe_float(x):
+        try:
+            if x in [None, 'None', 'nan', 'NaN', '']:
+                return np.nan
+            return float(x)
+        except Exception:
+            return np.nan
+
     cv_annot['MaveDB_score_mean'] = cv_annot['MaveDB_score'].str.split(',').apply(
-        lambda x: np.mean([float(i) for i in x]) if isinstance(x, list) else np.nan
+        lambda x: np.nanmean([safe_float(i) for i in x]) if isinstance(x, list) else np.nan
     )
     cv_annot['MaveDB_score_abs_mean'] = cv_annot['MaveDB_score'].str.split(',').apply(
-        lambda x: np.mean([abs(float(i)) for i in x]) if isinstance(x, list) else np.nan
+        lambda x: np.nanmean([abs(safe_float(i)) for i in x]) if isinstance(x, list) else np.nan
     )
     cv_annot['MaveDB_score_min'] = cv_annot['MaveDB_score'].str.split(',').apply(
-        lambda x: np.min([float(i) for i in x]) if isinstance(x, list) else np.nan
+        lambda x: np.nanmin([safe_float(i) for i in x]) if isinstance(x, list) else np.nan
     )
     cv_annot['MaveDB_score_max'] = cv_annot['MaveDB_score'].str.split(',').apply(
-        lambda x: np.max([float(i) for i in x]) if isinstance(x, list) else np.nan
+        lambda x: np.nanmax([safe_float(i) for i in x]) if isinstance(x, list) else np.nan
     )
 
 
     # Create a new column using string operations in a more efficient way
+    print("Creating chrom and chromStart columns")
     cv_annot["chrom"] = "chr" + cv_annot["Location"].str.split(":").str[0]
     cv_annot["chromStart"] = cv_annot["Location"].str.split(":").str[1].str.split("-").str[0]  
     
+    print("Adding variant name column")
     cv_annot = utils.add_variant_name(cv_annot,  
                                       chrom_col='chrom',
                                     start_col='chromStart',
@@ -290,13 +305,15 @@ def filter_annotations(
    
     #   Add mutant column: ref_aa + position + alt_aa
     if "Amino_acids" in cv_annot.columns:
+        print("Adding mutant column")
         cv_annot.loc[:, "mutant"] = (
             cv_annot["Amino_acids"].str.split("/").str[0]
-            + cv_annot["Protein_position"]
+            + cv_annot["Protein_position"].astype(str)
             + cv_annot["Amino_acids"].str.split("/").str[1]
         ) 
     
     # Add ENST column: transcript ID without version
+    print("Adding ENST column")
     cv_annot.loc[:, "ENST"] = cv_annot["Feature"].str.split(".").str[0]
     
     print(cv_annot.shape)
@@ -458,38 +475,62 @@ def run_correlation_analysis(vep_annot,
     return r2_df
 
 
-def plot_correlation_analysis(r2_df,
-                              x_var="r2_diff",
-                              y_var="annotation",
-                              figsize=(6, 7),
-                              ylabel="Annotation",
-                              xlabel="Difference in correlation between non-REF vs. REF\n"
-                                    r"($\rho_{\text{nonREF}} \text{ }  \Delta \text{ } \rho_{\text{REF}}$)",
-                              legend_title="non-REF\ncorrelation\n"
-                                          r"$(|ρ_{\text{nonREF}}|)$",
-
-                              title=None,
-                              add_summary_subtitle=True,
-                              hue="nonref_r_abs", 
-                              palette="flare_r",
-
-                              # Filtering options
-                              min_n=None,
-                              max_p=None,
-                              min_diff=None,
-                              annotations=None):
+def plot_correlation_analysis(
+    r2_df,
+    x_var="r2_diff",
+    y_var="annotation",
+    figsize=(6, 7),
+    ylabel="Annotation",
+    xlabel="Difference in Correlation Between Non-ref vs. Ref\n"
+           r"($\rho_{\text{non-ref}} \text{ }  \Delta \text{ } \rho_{\text{ref}}$)",
+    legend_title="non-ref\ncorrelation\n"
+                 r"$(|ρ_{\text{non-ref}}|)$",
+    title=None,
+    add_summary_subtitle=True,
+    hue="nonref_r_abs",
+    palette="flare_r",
+    # Filtering options
+    min_n=None,
+    max_p=None,
+    min_diff=None,
+    annotations=None,
+    # Faceting option
+    facet_col=None,
+    facet_col_wrap=2,
+    facet_sharex=True,
+    facet_sharey=True,
+    facet_height=None,
+    facet_aspect=1.2,
+    facet_legend="auto",
+    # New argument for category column
+    show_category_column=False,
+    category_dict=None,
+    category_palette=None,
+    category_legend_title="Category",
+    category_legend_loc='center left',
+    category_legend_bbox_to_anchor=(0.8, 0.25),
+):
     """
-    Plot the correlation analysis results.
+    Plot the correlation analysis results, with optional faceting by a column.
+    Optionally adds a column to the left of the y-axis with boxes indicating annotation category.
     """
     import src.utils as utils
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+
+    # Use global ANNOT_DICT if not provided
+    global ANNOT_DICT
+    if category_dict is None:
+        category_dict = ANNOT_DICT
+
     r2_df = r2_df.copy()
 
     if min_n is not None:
-        r2_df = r2_df.loc[(r2_df["ref_n"] > min_n) 
+        r2_df = r2_df.loc[(r2_df["ref_n"] > min_n)
                           & (r2_df["nonref_n"] > min_n)]
 
     if max_p is not None:
-        r2_df = r2_df.loc[(r2_df["ref_p"] < max_p) 
+        r2_df = r2_df.loc[(r2_df["ref_p"] < max_p)
                           & (r2_df["nonref_p"] < max_p)]
 
     if min_diff is not None:
@@ -503,25 +544,209 @@ def plot_correlation_analysis(r2_df,
     r2_df.sort_values(x_var, ascending=False, inplace=True)
     r2_df.loc[:, "nonref_r_abs"] = r2_df["nonref_r"].abs()
 
-    if add_summary_subtitle:
-        nonref_win_pct = (r2_df[x_var] > 0).sum() / len(r2_df.loc[r2_df[x_var]!=0])
-        if title is None:
-            title = f"Non-REF win rate: {nonref_win_pct:.1%}"
+    # --- Consistent category palette setup ---
+    # Always determine all possible categories from category_dict (including "other")
+    all_possible_categories = list(sorted(set(category_dict.values()) | {"other"}))
+    if show_category_column:
+        r2_df["category"] = r2_df["annotation"].map(category_dict)
+        r2_df["category"] = r2_df["category"].fillna("other")
+        if category_palette is None:
+            # Use a consistent palette for all possible categories, not just those present in the data
+            palette_colors = sns.color_palette("tab10", n_colors=len(all_possible_categories))
+            category_palette = dict(zip(all_possible_categories, palette_colors))
         else:
-            title = f"{title}\nNon-REF win rate: {nonref_win_pct:.1%}"
+            # If user provides a palette, ensure it covers all possible categories
+            # Avoid item assignment on string
+            if isinstance(category_palette, dict):
+                for cat in all_possible_categories:
+                    if cat not in category_palette:
+                        # Assign a default color if missing
+                        category_palette = dict(category_palette)  # Make a copy if not already
+                        category_palette[cat] = sns.color_palette("tab10", n_colors=len(all_possible_categories))[all_possible_categories.index(cat)]
+            else:
+                # If category_palette is not a dict, ignore and use default
+                palette_colors = sns.color_palette("tab10", n_colors=len(all_possible_categories))
+                category_palette = dict(zip(all_possible_categories, palette_colors))
 
-    plt.figure(figsize=figsize)  # Increased height to 12
-    sns.barplot(r2_df, 
-                x=x_var, 
-                y=y_var, 
-                hue=hue, 
-                palette=palette)
-    plt.legend(title=legend_title)
-    plt.ylabel(ylabel)
-    plt.xlabel(xlabel)
-    if title is not None:
-        plt.title(title)
-    # Replace underscores with spaces in y-tick labels
-    _ = plt.gca().set_yticklabels([label.get_text().replace('_', ' ') for label in plt.gca().get_yticklabels()])
- 
-    return r2_df
+    if add_summary_subtitle:
+        nonref_win_pct = (r2_df[x_var] > 0).sum() / len(r2_df.loc[r2_df[x_var] != 0])
+        if title is None:
+            title = f"Non-ref win rate: {nonref_win_pct:.1%}"
+        else:
+            title = f"{title}\nNon-ref win rate: {nonref_win_pct:.1%}"
+
+    # Facet by a column if requested
+    if facet_col is not None:
+        import seaborn as sns
+        import matplotlib.pyplot as plt
+
+        # Set facet height if not provided
+        if facet_height is None:
+            # Try to scale height by number of y categories per facet
+            n_facets = r2_df[facet_col].nunique()
+            n_y = r2_df[y_var].nunique()
+            facet_height = max(figsize[1] / n_facets, 3)
+
+        g = sns.catplot(
+            data=r2_df,
+            kind="bar",
+            x=x_var,
+            y=y_var,
+            hue=hue,
+            palette=palette,
+            col=facet_col,
+            col_wrap=facet_col_wrap,
+            sharex=facet_sharex,
+            sharey=facet_sharey,
+            height=facet_height,
+            aspect=facet_aspect,
+            legend=facet_legend,
+        )
+        g.set_axis_labels(xlabel, ylabel)
+        g.set_titles(col_template="{col_name}")
+        if title is not None:
+            plt.subplots_adjust(top=0.85)
+            g.fig.suptitle(title)
+        # Replace underscores with spaces in y-tick labels for each facet
+        for ax in g.axes.flatten():
+            ax.set_yticklabels([
+                label.get_text().replace('_af', '_AF') .replace('_', ' ')
+                for label in ax.get_yticklabels()
+            ])
+        # Set legend title
+        if legend_title is not None:
+            g._legend.set_title(legend_title)
+        # Add category column if requested (not supported for facet for now)
+        if show_category_column:
+            import warnings
+            warnings.warn("Category column not currently supported for faceted plots.")
+        return {'fig': g.fig, 'axes': g.axes, 'data': r2_df, 'facet': g}
+    else:
+        if show_category_column:
+            # --- Custom plotting with category column ---
+            import matplotlib.patches as mpatches
+
+            # Prepare data for plotting
+            y_labels = r2_df[y_var].tolist()
+            y_pos = range(len(y_labels))
+            # Map annotation to category and color
+            categories = r2_df["category"].tolist()
+            # Use the consistent palette for all possible categories
+            cat_color_map = {cat: category_palette[cat] for cat in all_possible_categories}
+            cat_colors = [cat_color_map[cat] for cat in categories]
+
+            # Set up figure with two axes: one for category, one for barplot
+            fig = plt.figure(figsize=figsize)
+            # Gridspec: left for category, right for barplot
+            from matplotlib.gridspec import GridSpec
+            gs = GridSpec(1, 2, width_ratios=[0.05, 0.95], wspace=0.05)
+            ax_cat = fig.add_subplot(gs[0, 0])
+            ax_bar = fig.add_subplot(gs[0, 1], sharey=ax_cat)
+
+            # Draw category boxes
+            for i, (cat, color) in enumerate(zip(categories, cat_colors)):
+                ax_cat.add_patch(
+                    mpatches.Rectangle(
+                        (0.01, i - 0.4), 1, 0.8, color=color, ec='black', linewidth=2
+                    )
+                )
+            ax_cat.set_ylim(-0.5, len(y_labels) - 0.5)
+            ax_cat.set_xlim(0, 1)
+            ax_cat.set_xticks([])
+            ax_cat.set_yticks(y_pos)
+            # Show y-tick labels only on barplot axis
+            ax_cat.set_yticklabels([])
+            ax_cat.tick_params(left=False, labelleft=False, right=False)
+            ax_cat.set_frame_on(False)
+
+            # Draw barplot
+            sns.barplot(
+                data=r2_df,
+                x=x_var,
+                y=y_var,
+                hue=hue,
+                palette=palette,
+                ax=ax_bar
+            )
+            ax_bar.set_ylabel(ylabel)
+            ax_bar.set_xlabel(xlabel)
+            if title is not None:
+                ax_bar.set_title(title)
+
+            # Move y-tick labels to the left axis (category)
+            ax_bar.set_yticklabels([])
+            ax_bar.tick_params(left=False, labelleft=False)
+            # Set legend in the lower right
+            handles, labels = ax_bar.get_legend_handles_labels()
+            if legend_title is not None:
+                ax_bar.legend(
+                    handles=handles,
+                    title=legend_title,
+                    frameon=False,
+                    loc='lower right'
+                )
+
+            # Replace underscores with spaces in y-tick labels
+            ax_bar.set_yticklabels([label.get_text().replace('_', ' ').replace(' af', ' AF') for label in ax_bar.get_yticklabels()])
+
+            # Add category legend, sorted alphabetically
+            sorted_categories = sorted(all_possible_categories)
+            cat_legend_handles = [
+                mpatches.Patch(color=cat_color_map[cat], label=cat)
+                for cat in sorted_categories
+            ]
+            # Place category legend to the left of the plot
+            fig.legend(
+                handles=cat_legend_handles,
+                title=category_legend_title,
+                loc=category_legend_loc,
+                bbox_to_anchor=category_legend_bbox_to_anchor,
+                frameon=False
+            )
+            # Add y-tick labels to the left of the category boxes
+            for i, label in enumerate(y_labels):
+                ax_cat.text(-0.05, i, label.replace('_', ' '), va='center', ha='right', fontsize=plt.rcParams.get("ytick.labelsize", 10))
+            plt.subplots_adjust(left=0.22, right=0.98, wspace=0.02)
+
+            # Move the y-axis label further to the left to avoid overlap with annotation names
+            ax_bar.yaxis.set_label_coords(-0.75, 0.5)
+
+            # Remove top and right spines (margin lines) for both axes
+            ax_cat.spines['top'].set_visible(False)
+            ax_cat.spines['right'].set_visible(False)
+            ax_bar.spines['top'].set_visible(False)
+            ax_bar.spines['right'].set_visible(False)
+
+            return {'fig': fig, 'axes': (ax_cat, ax_bar), 'data': r2_df}
+        else:
+            plt.figure(figsize=figsize)
+            g = sns.barplot(
+                data=r2_df,
+                x=x_var,
+                y=y_var,
+                hue=hue,
+                palette=palette
+            )
+            plt.legend(title=legend_title)
+            plt.ylabel(ylabel)
+            plt.xlabel(xlabel)
+            if title is not None:
+                plt.title(title)
+            # Replace underscores with spaces in y-tick labels
+            _ = plt.gca().set_yticklabels([label.get_text().replace('_', ' ') for label in plt.gca().get_yticklabels()])
+            
+            # Remove top and right spines (margin lines) for both axes
+            # Fix: g.axes is a numpy array of axes, not a string, so we should not assign to g.axes[0] as a string
+            # Instead, check if g.axes is an array or a single axis
+            axes = g.axes if hasattr(g, "axes") else [g]
+            if hasattr(axes, "__iter__"):
+                for ax in axes:
+                    if hasattr(ax, "spines"):
+                        ax.spines['top'].set_visible(False)
+                        ax.spines['right'].set_visible(False)
+            else:
+                if hasattr(axes, "spines"):
+                    axes.spines['top'].set_visible(False)
+                    axes.spines['right'].set_visible(False)
+            
+            return {'fig': g.figure, 'axes': g.axes, 'data': r2_df}

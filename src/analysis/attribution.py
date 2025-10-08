@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 import src.utils as utils
-
+import seaborn as sns
+import matplotlib.pyplot as plt
  
 
 def wtvariants_to_vep_linear_model(
@@ -12,6 +13,7 @@ def wtvariants_to_vep_linear_model(
         random_state=42, 
         model_kwargs={}, 
         add_positions=True,
+        verbose=True,
     ):
     """
     Fit a Ridge or Lasso regression model to predict VEP values from wt_variant features,
@@ -40,6 +42,8 @@ def wtvariants_to_vep_linear_model(
         Additional keyword arguments to pass to the pivot table function.
     add_positions : bool, default=True
         If True, add positions to the interaction_df.
+    verbose : bool, default=True
+        If True, print progress.
 
     Returns
     -------
@@ -54,7 +58,7 @@ def wtvariants_to_vep_linear_model(
     # Remove any rows with NaNs in X or y and report how many rows were dropped
     nan_mask = (~Xwt.isna().any(axis=1)) & (~y_vep.isna().any(axis=1))
     n_dropped = (~nan_mask).sum()
-    if n_dropped > 0:
+    if n_dropped > 0 and verbose:
         print(f"Dropped {n_dropped} haplotypes due to NaNs in input or target matrices.")
     Xwt_clean = Xwt.loc[nan_mask]
     y_vep_clean = y_vep.loc[nan_mask]
@@ -139,9 +143,10 @@ def plot_clinsig_interaction_strength(
     x="clinsig",    
     y="interaction_strength",
     palette=utils.get_clinsig_palette(),
-    title="Mean Interaction Strength per Clinical Variant",
+    title="Marginal Effect Size per Clinical Variant",
     xlabel="Clinical Significance",
-    ylabel="Interaction Strength",
+    ylabel="Marginal Effect Size",
+    # clinsig_sort_order = ["benign", "VUS", "pathogenic", ],
     figsize=(5, 5),
     text_format="star",
     show_test_name=False,
@@ -150,6 +155,7 @@ def plot_clinsig_interaction_strength(
     pvalue_format_string=" ({:.2g})",
     test='Mann-Whitney',
     annotator_kwargs=None,
+    xlabel_rotation=None,  # New argument for label rotation
 ):
     import matplotlib.pyplot as plt
     import seaborn as sns
@@ -169,6 +175,8 @@ def plot_clinsig_interaction_strength(
             annot_df[[site_col, x]].drop_duplicates().rename(columns={site_col: "clinical_variant"})
         )
 
+    bar_df = utils.sort_by_clinsig(bar_df, clinsig_col=x)
+
     # Standardize clinsig labels: replace underscores with spaces, expand "path" and "likely_path"
     def clean_clinsig(clinsig):
         clinsig = clinsig.replace("_", "\n")
@@ -176,6 +184,8 @@ def plot_clinsig_interaction_strength(
             return "pathogenic"
         elif clinsig == "likely\npath":
             return "likely\npathogenic"
+        elif clinsig == "vus":
+            return "VUS"
         return clinsig
 
     bar_df[x] = bar_df[x].astype(str).apply(clean_clinsig)
@@ -188,7 +198,14 @@ def plot_clinsig_interaction_strength(
             k_clean = "pathogenic"
         elif k_clean == "likely\npath":
             k_clean = "likely\npathogenic"
+        elif k_clean == "vus":
+            k_clean = "VUS"
         palette_cleaned[k_clean] = v
+
+    # Sort bar_df by clinsig order: "VUS", "pathogenic", "benign" 
+    # bar_df[x] = pd.Categorical(bar_df[x], categories=clinsig_sort_order, ordered=True)
+    # bar_df = bar_df.sort_values(by=x)
+    
 
     plt.figure(figsize=figsize)
 
@@ -206,6 +223,21 @@ def plot_clinsig_interaction_strength(
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
+
+    # Optionally rotate x-axis labels and adjust anchor
+    if xlabel_rotation is not None:
+        for label in ax.get_xticklabels():
+            label.set_rotation(xlabel_rotation)
+            # Adjust horizontal alignment based on rotation
+            if xlabel_rotation > 0:
+                label.set_ha('right')
+                label.set_va('top')
+            elif xlabel_rotation < 0:
+                label.set_ha('left')
+                label.set_va('top')
+            else:
+                label.set_ha('center')
+                label.set_va('top')
 
     # Get the order of clinsig groups as plotted
     clinsig_order = [t.get_text() for t in ax.get_xticklabels()]
@@ -246,3 +278,132 @@ def plot_clinsig_interaction_strength(
 
     return {'fig': plt.gcf(), 'ax': ax, 'data': bar_df}
 
+
+def plot_merged_clustermaps(
+    matrices,
+    log_color_scale=True,
+    log_eps=1e-6,
+    cmap="viridis",
+    fillna=0,
+    figsize=(16, 8),
+    title="WT-Clinical Variant Joint Effect Size by Region",
+    col_colors_palette="binary",
+    cbar_kws={"orientation": "horizontal"},
+    **kwargs
+):
+    """
+    Plot merged clustermaps of multiple matrices side by side, with column colors indicating the matrix name.
+
+    Parameters
+    ----------
+    matrices : dict of pd.DataFrame
+        Dictionary of matrices to merge and plot. Keys are matrix names.
+    log_color_scale : bool, default True
+        If True, use logarithmic color scale for the heatmap.
+    log_eps : float, default 1e-6
+        Small value to add before log10 to avoid log(0).
+    cmap : str, default "viridis"
+        Colormap for the heatmap.
+    figsize : tuple, default (16, 8)
+        Figure size for the clustermap.
+    title : str, default "Merged WT-Clinical Variant Interaction Matrices"
+        Title for the plot.
+    **kwargs : dict, optional
+        Additional keyword arguments to pass to sns.clustermap.
+    """
+
+    from matplotlib.colors import to_hex
+    from matplotlib.patches import Patch
+    from matplotlib.colors import LogNorm
+    matrix_names = list(matrices.keys())
+    orig_matrices = []
+    col_colors = []
+
+    # Assign a unique color to each matrix name
+    palette = sns.color_palette(col_colors_palette, n_colors=len(matrix_names))
+    name_to_color = {name: to_hex(color) for name, color in zip(matrix_names, palette)}
+
+    for name in matrix_names:
+        X = matrices[name]
+        if fillna is not None:
+            X = X.fillna(fillna)
+        orig_matrices.append(X)
+        # For each column in this matrix, assign the color for this matrix name
+        col_colors.append([name_to_color[name]] * X.shape[1])
+
+    # Concatenate matrices horizontally (columns)
+    orig_concat = np.concatenate([m.values for m in orig_matrices], axis=1)
+    # Build the full index and columns
+    row_labels = matrices[matrix_names[0]].index
+    col_labels = []
+    for name, mat in zip(matrix_names, orig_matrices):
+        col_labels.extend([c for c in mat.columns])
+
+    # Concatenate col_colors
+    col_colors_flat = sum(col_colors, [])
+
+    # Create DataFrame for seaborn
+    orig_concat_df = pd.DataFrame(orig_concat, index=row_labels, columns=col_labels)
+
+    # Determine vmin and vmax for LogNorm
+    # Avoid zeros for LogNorm: set minimum to smallest positive value
+    if log_color_scale:
+        # Masked array to ignore zeros and nans
+        masked = np.ma.masked_where((orig_concat_df.values < 0) | np.isnan(orig_concat_df.values), orig_concat_df.values)
+        if masked.count() == 0:
+            vmin = 1e-6
+            vmax = 1
+        else:
+            vmin = masked.min()
+            vmax = masked.max()
+        norm = LogNorm(vmin=max(vmin, log_eps), vmax=max(vmax, log_eps*10))
+    else:
+        norm = None
+
+    # Plot the clustermap
+    g = sns.clustermap(
+        orig_concat_df,
+        cmap=cmap,
+        mask=np.isnan(orig_concat_df),
+        annot=orig_concat_df.round(3),
+        fmt=".3f",
+        linewidths=0.5,
+        linecolor="#cccccc",
+        col_colors=col_colors_flat,
+        xticklabels=True,
+        yticklabels=True,
+        figsize=figsize, 
+        cbar_kws=cbar_kws,
+        norm=norm,
+        **kwargs
+    )
+
+    # If col_cluster is False, draw a white line splitting the two submatrices
+    if not kwargs.get("col_cluster", True) and len(matrix_names) == 2:
+        # Find the split index (number of columns in the first matrix)
+        split_idx = orig_matrices[0].shape[1]
+        # Draw a vertical white line at the split
+        ax = g.ax_heatmap
+        ax.axvline(split_idx, color="white", linewidth=3, zorder=10)
+    if log_color_scale:
+        g.ax_cbar.set_title("Log-scaled Mean Joint Effect Size")
+    else:
+        g.ax_cbar.set_title("Mean Joint Effect Size")
+    g.ax_heatmap.set_xlabel("Clinical Variant Region")
+    g.ax_heatmap.set_ylabel("WT Variant Region")
+    
+    g.ax_heatmap.set_xticklabels(g.ax_heatmap.get_xticklabels(), rotation=45, ha="right")
+    g.ax_heatmap.set_yticklabels(g.ax_heatmap.get_yticklabels(), rotation=0)
+    # Reduce padding around the heatmap
+    g.ax_heatmap.figure.subplots_adjust(left=0.10, right=0.98, top=0.92, bottom=0.10)
+    # Set the title over the entire plot (including dendrograms and heatmap)
+    g.fig.suptitle(title, y=0.95, fontsize='large')
+
+    # Add a legend for the matrix names/colors
+    handles = [Patch(facecolor=name_to_color[name], label=name.replace("_", " ")) for name in matrix_names]
+    g.ax_heatmap.legend(handles=handles, title="", bbox_to_anchor=(0.5, 1.2), loc='upper left') 
+    
+    # Set the position of the colorbar: (x, y, width, height) in figure coordinates
+    g.ax_cbar.set_position((.275, 0.82, .2, 0.025))
+    plt.show()
+    return {'fig': g.fig, 'axes': {'heatmap': g.ax_heatmap}, 'data': orig_concat_df}
