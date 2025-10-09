@@ -117,24 +117,18 @@ def make_palette(values: list,
 
 def get_clinsig_palette(values=['path', 'likely_path', 'likely_benign', 'benign'],
                          palette='bwr_r'):
-    """
-    Create a color palette dictionary mapping clinical significance values to colors.
-    
-    Args:
-        values: List of clinical significance values to map to colors. Default is
-               ['path', 'likely_path', 'likely_benign', 'benign']
-        palette: Name of seaborn color palette to use. Default is 'bwr_r' for 
-                blue-white-red reversed palette.
-    
-    Returns:
-        dict: Dictionary mapping each clinical significance value to a hex color code
-    """
     palette = make_palette(values, palette) 
     palette["VUS"] = "lightgray"
     palette["vus"] = "lightgray"
     palette["pathogenic"] = palette["path"]
     palette["likely_pathogenic"] = palette["likely_path"]
+
+    # Avoid changing dict size during iteration by iterating over a list of keys
+    for k in list(palette.keys()):
+        palette[k.replace("_", " ")] = palette[k]
+
     return palette
+
 
 
 def get_superpop_palette(values=['AFR', 'AMR', 'CSA', 
@@ -984,3 +978,50 @@ FIG_SAVE_KWARGS = {
     "pad_inches":0.1, 
     "facecolor":"None", 
 }
+
+
+
+def rasterize_figure(fig, types=["PathCollection", "Line2D", "Rectangle"]):
+    """
+    Rasterize all PathCollection (scatter), Line2D (lines), etc. at high resolution
+    """
+    axes = None
+    
+    # Handle case where fig is a matplotlib Axes object directly
+    if hasattr(fig, 'get_children'):
+        axes = [fig]
+    elif "axes" in fig:
+        axes = fig["axes"].values()
+    elif "ax" in fig:
+        # Single axis
+        axes = [fig["ax"]]
+    elif "axs" in fig:
+        # List or array of axes
+        axs = fig["axs"]
+        if isinstance(axs, dict):
+            axes = axs.values()
+        elif hasattr(axs, "__iter__"):
+            axes = axs
+        else:
+            axes = [axs]
+    elif "fig" in fig and hasattr(fig["fig"], "get_axes"):
+        axes = fig["fig"].get_axes()
+    else:
+        axes = []
+
+    for ax in axes:
+        if ax is not None:
+            # Rasterize all PathCollection (scatter), Line2D (lines), etc.
+            for artist in ax.get_children():
+                # Scatter points
+                if artist.__class__.__name__ == "PathCollection" and artist.__class__.__name__ in types:
+                    artist.set_rasterized(True)
+                # Lines
+                if artist.__class__.__name__ == "Line2D" and artist.__class__.__name__ in types:
+                    artist.set_rasterized(True)
+                # Bars (if any)
+                if artist.__class__.__name__ == "Rectangle" and artist.get_label() == "" and artist.__class__.__name__ in types:
+                    artist.set_rasterized(True)
+            # Do NOT rasterize text
+
+    return fig

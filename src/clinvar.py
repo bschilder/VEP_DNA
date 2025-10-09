@@ -431,8 +431,9 @@ def bed_to_sites(bed, chrom_col="chrom", start_col="chromStart", end_col="chromE
     Returns:
         DataFrame in sites format
     """
-    bed = bed.copy()
+    
     if isinstance(bed, pd.DataFrame):
+        bed = bed.copy()
         bed = pl.DataFrame(bed)
     
     sites =  bed.rename({
