@@ -68,6 +68,8 @@ def create_db(reference=None,
               bed=None, 
               variants=None, 
               save_path="gvl/geuvadis.chr22.gvl", 
+              length=2**15,
+              max_mem=16*2**30,
               force = False):
 
     if not os.path.exists(save_path) or force is True:
@@ -77,9 +79,9 @@ def create_db(reference=None,
             bed=bed.filter(pl.col("chrom")=="chr22"),
             variants=variants,
             # bigwigs=gvl.BigWigs.from_table(name="depth", table=bigwig_table),
-            length=2**15, # <-- required to select sequence subsets afterwards
+            length=length, # <-- required to select sequence subsets afterwards
     #         max_jitter=128,
-            max_mem=16*2**30,
+            max_mem=max_mem,
             overwrite=True,
         )
     print("Connecting to database")

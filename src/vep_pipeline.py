@@ -157,6 +157,7 @@ def vep_pipeline(site_ds,
                  site_filters={},
                  device=None,
                  return_raw=False,
+                 default_dir="./",
                  verbose=True):
     """
     Run the VEP pipeline on a dataset.
@@ -197,17 +198,18 @@ def vep_pipeline(site_ds,
         raise ValueError(f"Invalid checkpoint_frequency: {checkpoint_frequency}. Must be one of: {', '.join(checkpoint_frequency_opts)}")
 
     # Check if xr_ds_path is provided
-    if xr_ds_path is None:
-            import uuid
-            xr_ds_path = os.path.join("/tmp", f"vep_pipeline_{uuid.uuid4().hex[:8]}.zarr")
+    if not return_raw:
+        if xr_ds_path is None:
+                import uuid
+                xr_ds_path = os.path.join(default_dir, f"vep_pipeline_{uuid.uuid4().hex[:8]}.zarr")
+                if verbose:
+                    print(f"Warning: No xr_ds_path provided, dataset will be saved to {xr_ds_path}")
+        else:
             if verbose:
-                print(f"Warning: No xr_ds_path provided, dataset will be saved to {xr_ds_path}")
-    else:
-        if verbose:
-            print(f"Dataset will be saved to {xr_ds_path}")
+                print(f"Dataset will be saved to {xr_ds_path}")
 
     # Initialize or load the dataset
-    if xr_ds is None:
+    if (not return_raw) and xr_ds is None:
         xr_ds = init_or_load_xarray_dataset(
             xr_ds_path=xr_ds_path,
             all_models=all_models, 
@@ -216,19 +218,24 @@ def vep_pipeline(site_ds,
             verbose=verbose,
             force=force>1
         )
-
-    if verbose:
-        print(f"xarray Dataset dimensions: {xr_ds.dims}") 
-
+        if verbose:
+            print(f"xarray Dataset dimensions: {xr_ds.dims}") 
+    
     # Get REF dataset
     if "REF" in extra_samples:
         ds_ref, site_ds_ref = GVL.get_reference_dataset(site_ds, verbose=verbose)
     
     # Gather metadata: ploidy
-    all_ploid = xr_ds.coords["ploid"].values.tolist()
+    if not return_raw:
+        all_ploid = xr_ds.coords["ploid"].values.tolist()
+    else:
+        all_ploid = ["0","1"]
     # Get the models to run
     if all_models is None:
-        all_models = list(xr_ds.data_vars.keys())
+        if not return_raw:
+            all_models = list(xr_ds.data_vars.keys())
+        else:
+            all_models = list(get_model_to_metric_map().keys())
     run_models = utils.as_list(run_models)
     if run_models is None:
         run_models = all_models   
@@ -257,7 +264,7 @@ def vep_pipeline(site_ds,
         else:
             model_max_seqs_per_batch = max_seqs_per_batch
 
-        if not force and xarray_subset_notnull(xr_ds=xr_ds, 
+        if not return_raw and not force and xarray_subset_notnull(xr_ds=xr_ds, 
                                  model_name=model_name, 
                                  query=dict(slot=model_slots), 
                                  method="all") :
@@ -305,7 +312,10 @@ def vep_pipeline(site_ds,
             # Check if the site is already filled with values for all samples
             if force:
                 # Get all samples
-                samples_incomplete = xr_ds.sel(site=site_name)[[model_name]].get("sample").values
+                if return_raw and limit_samples is not None:
+                    samples_incomplete = limit_samples
+                else:
+                    samples_incomplete = xr_ds.sel(site=site_name)[[model_name]].get("sample").values
             else:
                 # Get the samples that are not complete
                 xr_null = find_null_xarray(xr_ds.sel(site=site_name)[[model_name]])
@@ -353,7 +363,7 @@ def vep_pipeline(site_ds,
                 # Check if the subset is null
                 if verbose>1:
                     print(f"Checking if the subset is null: {model_name}, {site_name}, {len(sample_names)} samples")
-                if xarray_subset_notnull(xr_ds=xr_ds, 
+                if not return_raw and xarray_subset_notnull(xr_ds=xr_ds, 
                                          model_name=model_name, 
                                          query=dict(site=site_name,
                                                    sample=sample_names, 

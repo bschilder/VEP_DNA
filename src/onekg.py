@@ -7,7 +7,7 @@ import src.utils as utils
 import src.config as config
 
 
-DEFAULT_KEY = "1000_Genomes_30x_on_GRCh38"
+DEFAULT_KEY = "1000_Genomes_on_GRCh38"
 
 def get_chr_1kg(vcf_file):
     return os.path.basename(vcf_file).split(".")[-3]

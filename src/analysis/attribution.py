@@ -1009,7 +1009,7 @@ def ridge_df_annot_to_matrices(
 
 def plot_paired_violin_with_stats(
     matrices,
-    save_path="manuscript/fig/spliceai_interaction_strength_by_exon_matching.pdf",
+    save_path=None,
     fig_save_kwargs=utils.FIG_SAVE_KWARGS,
     show=True,
     hue_col="matrix",
@@ -1144,7 +1144,7 @@ def plot_paired_violin_with_stats(
     annotator.apply_and_annotate()
 
     plt.tight_layout()
-    if fig_save_kwargs is not None:
+    if fig_save_kwargs is not None and save_path is not None:
         plt.savefig(save_path, **fig_save_kwargs)
     if show:
         plt.show()
