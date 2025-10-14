@@ -1,18 +1,18 @@
 import numpy as np
 import os
 import glob
-import xarray as xr
-import polars as pl
 import numpy as np
 from tqdm.auto import tqdm
 import time
-import pooch
-import torch
+import pooch 
 
 import src.utils as utils
 
 # Import our genvarloader helper functions from src
-import src.GVL as GVL
+try:
+    import src.GVL as GVL
+except ImportError:
+    print("Warning: Unable to import src.GVL.")
 
 def get_model_to_batchsize_map(model_name=None,
                                default=15):
@@ -189,6 +189,7 @@ def vep_pipeline(site_ds,
         verbose (bool): If True, print verbose output.
         device (str): Device to run the model on. 
     """ 
+    import torch
 
     # Check checkpoint_frequency is valid
     checkpoint_frequency_opts = ["site", "sample", "ploid"]
@@ -917,6 +918,7 @@ def vep_pipeline_onekg(bed,
     import src.clinvar as cv   
     import src.onekg as og
     import genvarloader as gvl
+    import polars as pl
      
     # Merged fasta reference
     # https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/technical/reference/GRCh38_reference_genome/GRCh38_full_analysis_set_plus_decoy_hla.fa
@@ -1037,7 +1039,8 @@ def load_vep_results(xr_ds_path,
                      as_df=True,
                      use_dask=True,
                      dropna_subset=None,
-                     verbose=True):
+                     verbose=True,
+                     **kwargs):
     """
     Load the VEP results from a zarr file.
 
@@ -1049,8 +1052,10 @@ def load_vep_results(xr_ds_path,
     Returns:
         xarray.Dataset: The VEP results.
     """
+    import xarray as xr 
+
     if not isinstance(xr_ds_path, xr.Dataset):
-        xr_ds = xr.open_dataset(xr_ds_path)
+        xr_ds = xr.open_dataset(xr_ds_path, **kwargs)
     else:
         xr_ds = xr_ds_path
     if notnull:
@@ -1073,6 +1078,92 @@ def load_vep_results(xr_ds_path,
         return df
     return xr_ds
 
+
+def vep_results_to_parquet(
+    xr_mfds_dir, 
+    return_df=False,
+    force=False, 
+    dropna_subset=None,
+    verbose=True
+):
+    """
+    Convert VEP results stored as zarr files in a directory to parquet files.
+
+    This function scans a directory for all `.zarr` files, converts each to a parquet file
+    (if not already present or if `force=True`), and optionally returns the results as a 
+    concatenated pandas DataFrame.
+
+    Parameters
+    ----------
+    xr_mfds_dir : str
+        Directory containing VEP results as `.zarr` files.
+    return_df : bool, default False
+        If True, return a concatenated pandas DataFrame of all results.
+        If False, return a list of parquet file paths.
+    force : bool, default False
+        If True, overwrite existing parquet files.
+    dropna_subset : list or None, default None
+        Columns to consider when dropping rows with missing values.
+        If provided, only rows with non-null values in these columns are kept.
+    verbose : bool, default True
+        If True, print progress and status messages.
+
+    Returns
+    -------
+    list of str or pandas.DataFrame
+        If return_df is False, returns a list of parquet file paths.
+        If return_df is True, returns a concatenated DataFrame of all results.
+    """
+    import pandas as pd 
+    import xarray as xr
+    import glob
+    import os
+    from tqdm import tqdm
+
+    xr_mfds_paths = glob.glob(os.path.join(xr_mfds_dir, "*.zarr"))
+    dfs = []
+    for path in tqdm(xr_mfds_paths, desc="Converting VEP results to parquet"):
+        pq_path = path.replace(".zarr", ".parquet")
+        if os.path.exists(pq_path) and not force:
+            if verbose:
+                print(f"Loading from {pq_path}")
+            df = pd.read_parquet(pq_path)
+        else:
+            # Load from zarr
+            xr_ds = xr.open_dataset(path, engine='zarr')
+
+            # Drop NULL values if requested
+            xr_ds = xr_ds.where(xr_ds.notnull())
+
+            # Convert to dask dataframe
+            ddf = xr_ds.to_dask_dataframe().reset_index()
+
+            # Save to parquet
+            if verbose:
+                print(f"Saving to {pq_path}")
+            ddf.to_parquet(pq_path)
+
+            # Dropna if requested
+            if dropna_subset is not None:
+                ddf = ddf.dropna(subset=dropna_subset)
+
+            # Compute only the filtered result
+            df = ddf.compute()
+
+        # Append to list
+        if return_df:
+            dfs.append(df)
+        else:
+            dfs.append(pq_path)
+
+    # Concatenate if dfs
+    if return_df:
+        return pd.concat(dfs)
+    else:
+        return dfs
+
+
+
 def load_vep_results_mfdataset(
     xr_mfds_dir,
     suffix="*.zarr",
@@ -1088,7 +1179,7 @@ def load_vep_results_mfdataset(
     Load the VEP results from a directory of multiple zarr files, much faster by chunked reading and minimal memory use.
     Returns a DataFrame.
     """
-    import dask.dataframe as dd
+    # import dask.dataframe as dd
     import xarray as xr
     import glob
     import os

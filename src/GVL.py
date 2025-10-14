@@ -1,5 +1,3 @@
-import src.utils as utils
-
 import os
 import pandas as pd
 import genvarloader as gvl
@@ -9,8 +7,15 @@ import numba as nb
 import pooch
 from tqdm.auto import tqdm
 from typing import Literal
-
+from hirola import HashTable
+import awkward as ak
+from genoray import VCF
 from genoray._vcf import INT64_MAX
+import zipfile  
+from IPython.display import clear_output 
+
+import src.utils as utils
+
 
 
 def prepare_example(save_dir="/grid/koo/home/schilder/projects/GenomeEncoder/data/gvl",
@@ -922,3 +927,285 @@ def get_n_variants_agg(ds,
     return agg_func(ds.n_variants().squeeze().flatten())
 
 
+def get_haplotype_ids(hap_matrix):
+    """
+    Flatten the index: use "sample_ploid" as a single string index.
+
+    Args:
+        hap_matrix: The haplotype matrix (to determine the number of rows).
+
+    Returns:
+        flat_index: List of strings in the format "sample_ploid".
+    """
+    return np.array([ f"{sid}_{i%2}" for i, sid in enumerate(np.repeat(hap_matrix["sample"].values, 2)) ])
+
+def get_variant_ids(hap_matrix):
+    """
+    Generate wild type (WT) variant IDs in the format "chrPOS:START-END_REF_ALT" for the given variant indices.
+
+    Args:
+        hap_matrix: xarray.Dataset containing variant information. Must have
+            "Chromosome", "Start", "End", "REF", and "ALT" columns.
+
+    Returns:
+        np.ndarray: Array of strings, each representing a variant as "chrPOS:START-END_REF_ALT".
+
+    Example:
+        >>> ids = get_variant_ids(hap_matrix)
+        >>> print(ids)
+        ['chr1:100-200_A_G' 'chr1:200-300_C_T' 'chr1:300-400_G_A']
+    """
+    return np.array([
+        f"chr{chrom}:{start}-{end}_{ref}_{alt}"
+        for chrom, start, end, ref, alt in zip(
+            hap_matrix["Chromosome"].values,
+            hap_matrix["Start"].values,
+            hap_matrix["End"].values,
+            hap_matrix["REF"].values,
+            hap_matrix["ALT"].values
+        )
+    ])
+
+
+
+def get_merged_hap_xr(
+    vcf: VCF,
+    ds: gvl.Dataset,
+    regions=None,
+    samples=None,
+    unique_haplotypes: bool = False,
+    verbose: bool = True,
+):
+    """
+    Merge haplotype data from a VCF and a gvl.Dataset for specified regions and samples.
+
+    This function extracts and merges haplotype information from the provided VCF and gvl.Dataset
+    objects, optionally restricting to specific genomic regions and/or samples. The merged haplotype
+    matrix is constructed by intersecting genotype indices across the selected regions and samples.
+
+    !IMPORTANT!: For this to be accurate, the GVL Dataset must be derived from an SVAR file (as opposed to a VCF)
+    so that the genotypes are parsimonious.
+
+    Args:
+        vcf (VCF): The VCF object containing variant and genotype data. Must have a loaded .gvi index.
+        ds (gvl.Dataset): The genvarloader Dataset containing haplotype and sample information.
+        regions (optional): Genomic regions to include. If None, all regions are used.
+        samples (optional): Samples to include. If None, all samples are used.
+        unique_haplotypes (bool, optional): If True, only unique haplotypes are retained. Default is False.
+        verbose (bool, optional): If True, prints progress and status messages. Default is True.
+
+    Returns:
+        xarray.DataArray: The merged haplotype matrix as an xarray object.
+
+    Raises:
+        ValueError: If the VCF index is not loaded or if merging cannot be performed due to insufficient regions.
+        AssertionError: If the dataset does not contain haplotype sequences or ploidy information.
+
+    Notes:
+        - The VCF must have a loaded .gvi index (not .csi or .tbi).
+        - The function expects ds._seqs to be of type Haps and ds.ploidy to be set.
+        - The merged haplotype matrix will have variants as columns and haplotypes as rows.
+    """
+    from genvarloader._dataset._reconstruct import Haps
+    import xarray as xr
+
+    if vcf._index is None:
+        raise ValueError(
+            "VCF **genoray** index (.gvi, not .csi or .tbi) must exist and be loaded."
+            + " Call vcf._write_gvi_index() and vcf._load_index() to create and load it."
+        )
+    if verbose:
+        print("[get_merged_hap_xr] VCF index loaded and validated.")
+
+    assert isinstance(ds._seqs, Haps)
+    assert ds.ploidy is not None
+
+    if regions is None:
+        regions = slice(None)
+    if samples is None:
+        samples = slice(None)
+
+    if verbose:
+        print("[get_merged_hap_xr] Parsing index for regions and samples.")
+
+    ds_idx, _, reshape = ds._idxer.parse_idx((regions, samples))
+    if reshape is None:
+        raise ValueError("Need multiple regions to perform a merge.")
+    ds_idx = ds_idx.reshape(reshape)
+    r_idx, s_idx = np.unravel_index(ds_idx, ds.full_shape)
+    genos = ds._seqs.genotypes[r_idx, s_idx]
+
+    if verbose:
+        print("[get_merged_hap_xr] Calculating intersection of genotypes.")
+
+    min_idx = ak.max(genos[..., [0]], 0, keepdims=True, mask_identity=False)
+    max_idx = ak.min(genos[..., [-1]], 0, keepdims=True, mask_identity=False)
+    mask = (min_idx <= genos) & (genos <= max_idx)
+    intersection = gvl.Ragged(
+        ak.without_parameters(ak.to_regular(ak.to_regular(genos[mask], 1), 2))
+    )
+    # all regions are the same now, select first
+    intersection = intersection[0]
+    reshape = reshape[1:]
+    v_idxs = intersection.data
+    offsets = intersection.offsets
+
+    if verbose:
+        print(f"[get_merged_hap_xr] Found {len(np.unique(v_idxs))} unique variant indices.")
+
+    col_v_idxs = np.unique(v_idxs)
+
+    if offsets.ndim == 1:
+        n_slices = len(offsets) - 1
+        start_offs = offsets[:-1]
+        end_offs = offsets[1:]
+    elif offsets.ndim == 2:
+        n_slices = offsets.shape[1]
+        start_offs = offsets[0]
+        end_offs = offsets[1]
+    else:
+        raise ValueError(f"offsets must be 1D or 2D, got {offsets.ndim}D")
+
+    if verbose:
+        print(f"[get_merged_hap_xr] Building haplotype ID dictionaries for {n_slices} slices.")
+
+    hap_ids = dict()
+    hap_id_nr = dict()
+    hap_membership = np.empty(n_slices, dtype=np.uint32)
+    n_hap_ids = 0
+    for o_idx in range(n_slices):
+        o_s = start_offs[o_idx]
+        o_e = end_offs[o_idx]
+        _v_idxs = v_idxs[o_s:o_e]
+        byts = _v_idxs.tobytes()
+        if byts not in hap_ids:
+            hap_ids[byts] = _v_idxs
+            hap_id_nr[byts] = n_hap_ids
+            n_hap_ids += 1
+        hap_membership[o_idx] = hap_id_nr[byts]
+
+    n_uniq_haps = len(hap_ids)
+
+    if verbose:
+        print(f"[get_merged_hap_xr] {n_uniq_haps} unique haplotypes identified.")
+
+    hap_id_lens = np.array([len(h) for h in hap_ids.values()])
+    hap_id_offsets = np.empty(n_uniq_haps + 1, dtype=np.int64)
+    hap_id_offsets[0] = 0
+    hap_id_offsets[1:] = np.cumsum(hap_id_lens)
+    hap_ids = np.concatenate(list(hap_ids.values()))
+
+    n_uniq_vars = len(col_v_idxs)
+    if verbose:
+        print(f"[get_merged_hap_xr] Building haplotype matrix of shape ({n_uniq_haps}, {n_uniq_vars}).")
+
+    hap_matrix = np.zeros((n_uniq_haps, n_uniq_vars), dtype=np.bool_)
+    htable = HashTable(n_uniq_vars * 2, dtype=col_v_idxs.dtype)
+    htable.add(col_v_idxs)
+    for i in range(n_uniq_haps):
+        o_s = hap_id_offsets[i]
+        o_e = hap_id_offsets[i + 1]
+        hap_matrix[i, htable.get(hap_ids[o_s:o_e])] = True
+
+    if reshape is not None:
+        hap_membership = hap_membership.reshape(*reshape, ds.ploidy)
+    else:
+        hap_membership = hap_membership.reshape(-1, ds.ploidy)
+
+    hap_ids = gvl.Ragged.from_offsets(
+        hap_ids, (len(hap_id_offsets) - 1, None), hap_id_offsets
+    )
+
+    if not unique_haplotypes:
+        if verbose:
+            print("[get_merged_hap_xr] Expanding haplotype matrix to all haplotypes (not unique only).")
+        hap_matrix = hap_matrix[hap_membership]
+
+    if verbose:
+        print("[get_merged_hap_xr] Extracting variant metadata.")
+
+    meta = vcf._index.df[col_v_idxs].select(
+        Chromosome=pl.from_pandas(vcf._index.gr.Chromosome.iloc[col_v_idxs]),
+        Start=pl.col("POS") - 1,
+        End=pl.col("POS") + pl.col("ILEN").list.get(0).clip(upper_bound=0),
+        REF=pl.col("REF"),
+        ALT=pl.col("ALT").list.get(0),
+    ).to_pandas()
+    meta.index.name = 'variant'
+    meta = meta.to_xarray()
+
+    if verbose:
+        print("[get_merged_hap_xr] Constructing xarray DataArray and merging metadata.")
+
+    # (s p v)
+    hap_matrix = xr.DataArray(
+        hap_matrix,
+        dims=("sample", "ploid", "variant"),
+        coords={"sample": ds.subset_to(samples=samples).samples},
+        name='hap_matrix'
+    ).to_dataset()
+    hap_matrix = hap_matrix.merge(meta)
+
+    if verbose:
+        print("[get_merged_hap_xr] Done.")
+
+    return hap_ids, hap_membership, hap_matrix, col_v_idxs
+
+
+def hap_xr_to_df(hap_matrix, **kwargs):
+    return pd.DataFrame(hap_matrix["hap_matrix"].values.reshape(-1, hap_matrix.sizes["variant"]), 
+                        index=get_haplotype_ids(hap_matrix), 
+                        columns=get_variant_ids(hap_matrix),
+                        **kwargs)
+
+
+
+
+def load_gvl_datasets(gvl_zip_paths, window_size="variable", **kwargs):
+    """
+    Unzips and loads GVL datasets from a list of zip file paths.
+    Returns a dictionary of {key: gvl.Dataset}.
+    """
+    datasets = {}
+    for zip_path in gvl_zip_paths:
+        extract_dir = zip_path.replace(".zip", "")
+        # Unzip if not already unzipped
+        if not os.path.exists(extract_dir):
+            os.makedirs(extract_dir, exist_ok=True)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+                print(f"Extracted zip to {extract_dir}")
+
+        # Find all folders matching chr*_dataset.gvl/ in the extracted directory
+        chr_gvl_folders = [
+            f for f in os.listdir(extract_dir)
+            if f.endswith('_dataset.gvl') and f.startswith('chr')
+        ]
+
+        for folder in chr_gvl_folders:
+            folder_path = os.path.join(extract_dir, folder)
+            ds = gvl.Dataset.open(folder_path, **kwargs).with_seqs("annotated").with_len(window_size)
+            # Use a unique key for each dataset, e.g. include the parent directory name
+            key = f"{os.path.basename(extract_dir)}_{folder}"
+            datasets[key] = ds
+            print(f"Loaded dataset for {key}")
+            clear_output(wait=True)
+    return datasets
+
+def get_n_variants_df(datasets):
+    """
+    Given a dictionary of {key: gvl.Dataset}, returns a DataFrame with
+    columns: cohort, chrom, n_variants.
+    """ 
+    n_variants = []
+    for key, ds in tqdm(datasets.items()):
+        n_variants.append(pd.DataFrame(
+            {
+                "cohort": key.split("_")[0].upper(),
+                "chrom": ds.contigs[0],
+                # "sample": np.repeat(ds.samples, 2),  # Uncomment if needed
+                "n_variants": ds.n_variants().flatten()
+            }
+        ))
+    n_variants_df = pd.concat(n_variants)
+    return n_variants_df

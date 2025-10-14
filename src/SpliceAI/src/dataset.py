@@ -155,7 +155,16 @@ class SpliceHapDataset:
             pos_names.append(name+'_pos')
             neg_names.append(name+'_neg')
 
-        annot_ds = ds.write_annot_tracks(beds).with_tracks(pos_names+neg_names)
+        # Only write annotation tracks if they do not already exist in the dataset
+        existing_tracks = set(ds.available_tracks)
+        new_tracks = set(pos_names + neg_names)
+        tracks_to_add = new_tracks - existing_tracks
+        if tracks_to_add:
+            # Only add tracks that do not already exist
+            beds_to_add = {k: v for k, v in beds.items() if k in tracks_to_add}
+            annot_ds = ds.write_annot_tracks(beds_to_add).with_tracks(list(existing_tracks | tracks_to_add))
+        else:
+            annot_ds = ds.with_tracks(pos_names + neg_names)
 
         sites = gvl.sites_vcf_to_table(
             variant_path

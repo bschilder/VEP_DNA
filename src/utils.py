@@ -113,24 +113,27 @@ def make_palette(values: list,
     import seaborn as sns
     return dict(zip(values, sns.color_palette(palette, len(values)).as_hex()))
 
+ 
+
 def get_clinsig_palette(values=['path', 'likely_path', 'likely_benign', 'benign'],
                          palette='bwr_r'):
-    """
-    Create a color palette dictionary mapping clinical significance values to colors.
-    
-    Args:
-        values: List of clinical significance values to map to colors. Default is
-               ['path', 'likely_path', 'likely_benign', 'benign']
-        palette: Name of seaborn color palette to use. Default is 'bwr_r' for 
-                blue-white-red reversed palette.
-    
-    Returns:
-        dict: Dictionary mapping each clinical significance value to a hex color code
-    """
-    return make_palette(values, palette) 
+    palette = make_palette(values, palette) 
+    palette["VUS"] = "lightgray"
+    palette["vus"] = "lightgray"
+    palette["pathogenic"] = palette["path"]
+    palette["likely_pathogenic"] = palette["likely_path"]
 
-def get_superpop_palette(values=['AFR', 'AMR', 'EAS', 'EUR', 
-                                 'SAS', "CSA", "MID", "OCE"],
+    # Avoid changing dict size during iteration by iterating over a list of keys
+    for k in list(palette.keys()):
+        palette[k.replace("_", " ")] = palette[k]
+
+    return palette
+
+
+
+def get_superpop_palette(values=['AFR', 'AMR', 'CSA', 
+                                 'EAS', 'EUR', 'MID',
+                                   'OCE', 'SAS'],
                         palette='Set3'):
     cmap = make_palette(values, palette)
     cmap["REF"] = "grey"
@@ -424,6 +427,37 @@ def sort_by_reverse_string(df,
     
     return df
 
+def sort_by_clinsig(df,
+                    clinsig_col='clinsig',
+                    clinsig_order=get_clinsig_palette().keys(),
+                    ascending=True
+                    ):
+    """
+    Sort a DataFrame by clinical significance values in a specified order.
+    
+    Args:
+        df (pd.DataFrame): Input DataFrame to sort
+        clinsig_col (str): Name of column containing clinical significance values
+        clinsig_order (list): List of clinical significance values in desired order
+        ascending (bool): Whether to sort in ascending order
+        
+    Returns:
+        pd.DataFrame: Sorted DataFrame
+        
+    Example:
+        >>> df = pd.DataFrame({'clinsig': ['Pathogenic', 'Benign', 'VUS']})
+        >>> sort_by_clinsig(df, clinsig_order=['Benign', 'VUS', 'Pathogenic'])
+           clinsig
+        1   Benign
+        2      VUS
+        0  Pathogenic
+    """
+    return df.sort_values(
+        by=clinsig_col,
+        key=lambda x: x.map({k: i for i, k in enumerate(list(clinsig_order))}),
+        ascending=ascending
+    )
+
 def one_hot_seq(seq: str, 
                 transpose: bool = True,
                 **kwargs) -> np.ndarray:
@@ -644,12 +678,12 @@ def add_variant_name(df,
         pl.col(start_col).cast(pl.Utf8),
         pl.lit('-'),
         pl.when(pl.lit(end_col).is_null())
-        .then((pl.col(start_col).cast(pl.Int32) + pl.col(ref_col).str.len_chars()).cast(pl.Int32))
+        .then((pl.col(start_col).cast(pl.Int32) + pl.col(ref_col).cast(pl.Utf8).str.len_chars()).cast(pl.Int32))
         .otherwise(pl.col(end_col).cast(pl.Utf8) if end_col is not None else pl.col(start_col).cast(pl.Utf8)),
         pl.lit('_'),
-        pl.col(ref_col),
+        pl.col(ref_col).cast(pl.Utf8),
         pl.lit('_'),
-        pl.col(alt_col)
+        pl.col(alt_col).cast(pl.Utf8)
     ]).alias(alias))
     
     if was_pandas:
@@ -663,7 +697,7 @@ def vep_to_matrix(
     site_col="site",
     ploid_col="ploid",
     value_col="VEP",
-    fill_value="mean",
+    fill_value=None,
     duplicate_ref_hap=True,
     verbose=True
 ):
@@ -882,3 +916,112 @@ topo_colorscale = [
                     [0.90, "#5c3a21"],   # deep brown (shale)
                     [1.00, "#ffffff"],   # white (snow)
                 ]
+
+
+
+
+def minmax_normalize(X, procedure=["rows", "cols"], verbose=True):
+    """
+    Min-max normalize a matrix by columns and/or rows in a specified order.
+    Args:
+        X: Matrix to normalize (pd.DataFrame or np.ndarray)
+        procedure: List of procedures to apply. Can be "rows" or "cols".
+    Returns:
+        Normalized matrix
+    """
+
+    if not isinstance(X, pd.DataFrame) and isinstance(X, np.ndarray):
+        X = pd.DataFrame(X)    
+
+    def normalize_rows(X):
+        X = X.sub(X.min(axis=1), axis=0)
+        X = X.div(X.max(axis=1), axis=0)
+        return X
+    
+    def normalize_cols(X):
+        X = X.sub(X.min(axis=0), axis=1)
+        X = X.div(X.max(axis=0), axis=1)
+        return X
+    
+    for proc in procedure:
+        if proc == "rows":
+            if verbose:
+                print("Normalizing rows")
+            X = normalize_rows(X)
+        elif proc == "cols":
+            if verbose:
+                print("Normalizing columns")
+            X = normalize_cols(X)
+        else:
+            raise ValueError(f"Invalid procedure: {proc}")
+    return X
+
+
+def minmax_normalize_numpy(X):
+    """
+    Min-max normalize a matrix by columns and/or rows in a specified order.
+    Args:
+        X: Matrix to normalize (pd.DataFrame or np.ndarray)
+    Returns:
+        Normalized matrix
+    """
+    X_min = np.nanmin(X, axis=1, keepdims=True)
+    X_max = np.nanmax(X, axis=1, keepdims=True)
+    X = (X - X_min) / (X_max - X_min + 1e-8)
+    return X
+
+
+FIG_SAVE_KWARGS = {
+    "dpi":300, 
+    "bbox_inches":"tight", 
+    "transparent":True, 
+    "pad_inches":0.1, 
+    "facecolor":"None", 
+}
+
+
+
+def rasterize_figure(fig, types=["PathCollection", "Line2D", "Rectangle"]):
+    """
+    Rasterize all PathCollection (scatter), Line2D (lines), etc. at high resolution
+    """
+    axes = None
+    
+    # Handle case where fig is a matplotlib Axes object directly
+    if hasattr(fig, 'get_children'):
+        axes = [fig]
+    elif "axes" in fig:
+        axes = fig["axes"].values()
+    elif "ax" in fig:
+        # Single axis
+        axes = [fig["ax"]]
+    elif "axs" in fig:
+        # List or array of axes
+        axs = fig["axs"]
+        if isinstance(axs, dict):
+            axes = axs.values()
+        elif hasattr(axs, "__iter__"):
+            axes = axs
+        else:
+            axes = [axs]
+    elif "fig" in fig and hasattr(fig["fig"], "get_axes"):
+        axes = fig["fig"].get_axes()
+    else:
+        axes = []
+
+    for ax in axes:
+        if ax is not None:
+            # Rasterize all PathCollection (scatter), Line2D (lines), etc.
+            for artist in ax.get_children():
+                # Scatter points
+                if artist.__class__.__name__ == "PathCollection" and artist.__class__.__name__ in types:
+                    artist.set_rasterized(True)
+                # Lines
+                if artist.__class__.__name__ == "Line2D" and artist.__class__.__name__ in types:
+                    artist.set_rasterized(True)
+                # Bars (if any)
+                if artist.__class__.__name__ == "Rectangle" and artist.get_label() == "" and artist.__class__.__name__ in types:
+                    artist.set_rasterized(True)
+            # Do NOT rasterize text
+
+    return fig
