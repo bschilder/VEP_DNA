@@ -4,12 +4,14 @@ channels:
   - nodefaults
 dependencies:
   - python>=3.10,<3.13
-  - pooch
-  - scikit-learn
+  - pooch 
+  - pandas
+  - tqdm 
   ## Necessary for Elzar HPC
   - gcc
   - libgcc
   - libstdcxx-ng
+  - rust 
   ## Optional
   - bioconda::pgenlib # Optional
   - xarray # Optional
@@ -20,5 +22,5 @@ dependencies:
       - genvarloader
       # - git+https://github.com/mcvickerlab/GenVarLoader.git # Optional
       - borzoi-pytorch
-      - flash-attn==2.6.3 # Avoids build issues: pip install flash-attn==2.6.3 --no-build-isolation
+      - flash-attn==2.6.3 # Avoids build issues: python -m pip install flash-attn==2.6.3 --no-build-isolation
       - ipykernel

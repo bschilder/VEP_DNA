@@ -920,3 +920,5 @@ def get_n_variants_agg(ds,
         raise AttributeError("The provided object 'ds' does not have a callable 'n_variants' method.")
     
     return agg_func(ds.n_variants().squeeze().flatten())
+
+
