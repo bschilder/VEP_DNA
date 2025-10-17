@@ -2,6 +2,7 @@
 # NOTES:
 # - If you can trouble with flash-attn, try:  pip install flash-attn==2.6.3 --no-build-isolation
 
+from tkinter import E
 import numpy as np
 import torch
 from torch.amp import autocast
@@ -66,14 +67,23 @@ def score_all_tracks(seq: str,
         device = utils.get_device()
 
     # Convert numpy array to torch tensor add batch dimension
-    x = tokenizer(seq).to(device) 
+    x = tokenizer(seq,  permute=(2, 0, 1),).to(device) 
     
     # Run the model
-    with torch.no_grad(), autocast("cuda", torch.float16):
-        # Input shape: (batch_size, one_hot, L)
-        # Output shape: (batch_size, n_tissues, L)
-        trks = model(x)
-    del x
+    try:
+        with torch.no_grad(), autocast("cuda", torch.float16):
+            # Input shape: (batch_size, one_hot, L)
+            # Output shape: (batch_size, n_tissues, L)
+            trks = model(x)
+        del x
+    except Exception as e:
+        print(f"Error running model: {e}")
+        print(x.shape)
+        print(x)
+        print(model)
+        print(device) 
+        raise Exception(e)
+        
     if run_squeeze:
         return trks.squeeze()
     else:

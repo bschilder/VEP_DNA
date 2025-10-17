@@ -5,6 +5,7 @@ import numpy as np
 from tqdm.auto import tqdm
 import time
 import pooch 
+import warnings
 
 import src.utils as utils
 
@@ -384,6 +385,12 @@ def vep_pipeline(site_ds,
 
                 sample_names_nonextra = [s for s in sample_names if s not in extra_samples]
                 # Import all the haplotypes for region/batch
+                unknown_samples = [s for s in sample_names_nonextra if s not in site_ds.dataset.samples]
+                if len(unknown_samples)>0:
+                    warnings.warn(f"Some samples not found in mapping: {unknown_samples}")
+                    sample_names_nonextra = [s for s in sample_names_nonextra if s not in unknown_samples]
+                if len(sample_names_nonextra)==0:
+                    raise ValueError(f"No samples to run for {model_name}, {site_name}, {len(sample_names)}")
                 haps_wt, haps_mut, flags = site_ds[row_idx, sample_names_nonextra] 
 
                 if verbose>1:
@@ -489,12 +496,12 @@ def vep_pipeline(site_ds,
                             ] = v
  
                 # Save after each sample is complete
-                if checkpoint_frequency=="batch":
+                if checkpoint_frequency=="batch" and not return_raw:
                     update_xarray_dataset(ds=xr_ds, 
                                           xr_ds_path=xr_ds_path,
                                           verbose=verbose>1)
             # Save after each site is complete
-            if checkpoint_frequency=="site":
+            if checkpoint_frequency=="site" and not return_raw:
                 update_xarray_dataset(ds=xr_ds, 
                                       xr_ds_path=xr_ds_path,
                                       verbose=verbose>1) 
@@ -1247,7 +1254,18 @@ def get_all_sites(site_ds):
     return site_ds.rows["name"].unique().to_list()
 
 
-def get_middle_n(arr, n):
+def get_middle_n(arr, n=None):
+    """
+    Get the middle n elements along the last axis of an array, or handle dict of arrays recursively.
+    Supports torch.Tensor, np.ndarray, or dict of arrays as input.
+    """
+    if n is None:
+        return arr
+
+    # If arr is a dict (including defaultdict), apply recursively to each value
+    if isinstance(arr, dict):
+        return {k: get_middle_n(v, n) for k, v in arr.items()}
+
     # arr: torch.Tensor or np.ndarray
     last_dim = arr.shape[-1]
     if n is None or n >= last_dim:

@@ -734,7 +734,7 @@ def annotate_variants_with_bed(
     
     df["exon_number_distance"] = df["wt_exon_number"] - df["clinical_exon_number"]
     df["exon_number_distance_abs"] = df["exon_number_distance"].abs()
-    return df, exon_info_all
+    return df
 
 def plot_splicing_tracks(
     bed_dict,
@@ -1014,9 +1014,12 @@ def plot_paired_violin_with_stats(
     show=True,
     hue_col="matrix",
     group_color_palette="binary",
-    title="Paired Distributions of Mean Joint Effect Sizes",
+    title="Paired Distributions of Joint Effect Sizes",
     ylabel="Mean Joint Effect Size",
     figsize=(4, 6),
+    point_size=3,
+    line_alpha=0.2,
+    line_color="gray",
     annotator_kwargs={"test":"t-test_paired", 
                      "text_format":"full", 
                      "loc":"inside", 
@@ -1112,11 +1115,10 @@ def plot_paired_violin_with_stats(
         cut=0
     )
     # Overlay the data points
-    sns.stripplot(x='matrix', y='value', data=df_plot, jitter=True, color='k', alpha=0.5, zorder=2)
+    sns.stripplot(x='matrix', y='value', data=df_plot, jitter=True, color='k', alpha=0.5, zorder=2, size=point_size)
 
     # Draw lines between matched pairs, connecting each pair across all groups
-    # To avoid overplotting, fade the lines more as there are more matrices
-    base_alpha = 0.2 if len(matrix_names) > 2 else 0.3
+    # To avoid overplotting, fade the lines more as there are more matrices 
     matrix_columns = {name: i for i, name in enumerate(matrix_names)}
     for pair_idx in range(n_pairs):
         # Get y values for this pair in each group
@@ -1124,7 +1126,7 @@ def plot_paired_violin_with_stats(
         # X positions are integers (0, 1, ..., k-1)
         plt.plot(
             np.arange(len(matrix_names)), yvals,
-            color='gray', alpha=base_alpha, zorder=1
+            color=line_color, alpha=line_alpha, zorder=1
         )
 
     plt.title(title)
