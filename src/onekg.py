@@ -505,7 +505,8 @@ def get_sample_metadata(key=DEFAULT_KEY,
     return sample_metadata
 
 def get_annotation_vcf(chrom,
-                       base_url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/"):
+                       base_url="https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/supporting/functional_annotation/filtered/", 
+                       as_df=False):
     """
     Retrieve a variant annotation VCF file for a specific chromosome.
     
@@ -522,10 +523,17 @@ def get_annotation_vcf(chrom,
     pysam.VariantFile
         A pysam VariantFile object for the requested chromosome annotation file.
     """
-    import pysam
+    
     chrom = "chr"+str(chrom).replace("chr", "")
     url = f"{base_url}ALL.{chrom}.phase3_shapeit2_mvncall_integrated_v5.20130502.sites.annotation.vcf.gz"  
-    return pysam.VariantFile(url)
+    if as_df:
+        print(url)
+        from genoray import VCF
+        vcf = VCF(url)
+        return vcf.to_dataframe()
+    else:
+        import pysam
+        return pysam.VariantFile(url)
 
 def query_annotation_vcf(vcf,
                          rec,

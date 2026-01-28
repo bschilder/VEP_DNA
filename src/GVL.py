@@ -478,12 +478,20 @@ def create_msa(ref_coords, seq_arr):
         2D array containing the gappy MSA
 
     Example:
+        >>> ### EXAMPLE 1 ###
         >>> ref_coords = np.array([[100, 101, 103], [100, 102, 103]])
         >>> seq_arr = np.array([['A', 'T', 'G'], ['A', 'C', 'G']])
         >>> create_msa(ref_coords, seq_arr)
         array([[b'A', b'T', b'G'],
                [b'A', b'-', b'C'],
                [b'A', b'-', b'G']], dtype=int8)
+
+        >>> ### EXAMPLE 2 ###
+        >>> region_idx = 0
+        >>> sample_idx = range(451)
+        >>> ref_coords = stack_ploidy(site_ds[region_idx, ][0].ref_coords[sample_idx,])
+        >>> seq_arr = stack_ploidy(ds.subset_to(samples=sample_idx)[region_idx,])
+        >>> msa = reate_msa(ref_coords, seq_arr)
     """
     import time
     start_time = time.time()
@@ -1150,6 +1158,196 @@ def get_merged_hap_xr(
 
     if verbose:
         print("[get_merged_hap_xr] Done.")
+
+    return hap_ids, hap_membership, hap_matrix, col_v_idxs
+
+
+def get_single_locus_hap_matrix(
+    vcf: VCF,
+    ds: gvl.Dataset,
+    region=None,
+    samples=None,
+    unique_haplotypes: bool = False,
+    verbose: bool = True,
+):
+    """
+    Convert a single locus from a GVL object into a binary haplotype x variant matrix.
+
+    This function extracts haplotype information from a single genomic region in the provided
+    VCF and gvl.Dataset objects, creating a binary matrix where rows represent haplotypes
+    and columns represent variants. Unlike get_merged_hap_xr, this function works with
+    single regions and doesn't require multiple regions to merge.
+
+    Args:
+        vcf (VCF): The VCF object containing variant and genotype data. Must have a loaded .gvi index.
+        ds (gvl.Dataset): The genvarloader Dataset containing haplotype and sample information.
+        region (optional): Single genomic region to process. If None, all regions are used.
+        samples (optional): Samples to include. If None, all samples are used.
+        unique_haplotypes (bool, optional): If True, only unique haplotypes are retained. Default is False.
+        verbose (bool, optional): If True, prints progress and status messages. Default is True.
+
+    Returns:
+        tuple: A tuple containing:
+            - hap_ids (gvl.Ragged): Ragged array containing haplotype variant indices
+            - hap_membership (np.ndarray): Array mapping samples/ploids to haplotype IDs
+            - hap_matrix (xarray.Dataset): Binary haplotype x variant matrix with metadata
+            - col_v_idxs (np.ndarray): Variant indices used in the matrix
+
+    Raises:
+        ValueError: If the VCF index is not loaded.
+        AssertionError: If the dataset does not contain haplotype sequences or ploidy information.
+
+    Notes:
+        - The VCF must have a loaded .gvi index (not .csi or .tbi).
+        - The function expects ds._seqs to be of type Haps and ds.ploidy to be set.
+        - The haplotype matrix will have variants as columns and haplotypes as rows.
+    """
+    from genvarloader._dataset._reconstruct import Haps
+    import xarray as xr
+
+    if vcf._index is None:
+        raise ValueError(
+            "VCF **genoray** index (.gvi, not .csi or .tbi) must exist and be loaded."
+            + " Call vcf._write_gvi_index() and vcf._load_index() to create and load it."
+        )
+    if verbose:
+        print("[get_single_locus_hap_matrix] VCF index loaded and validated.")
+
+    assert isinstance(ds._seqs, Haps)
+    assert ds.ploidy is not None
+
+    if region is None:
+        region = slice(None)
+    if samples is None:
+        samples = slice(None)
+
+    if verbose:
+        print("[get_single_locus_hap_matrix] Parsing index for region and samples.")
+
+    # Parse indices for the single region
+    ds_idx, _, reshape = ds._idxer.parse_idx((region, samples))
+    ds_idx = ds_idx.reshape(reshape)
+    r_idx, s_idx = np.unravel_index(ds_idx, ds.full_shape)
+    
+    if verbose:
+        print("[get_single_locus_hap_matrix] Processing genotypes for single locus.")
+
+    # Simplified approach: get all genotypes but process more efficiently
+    if verbose:
+        print("[get_single_locus_hap_matrix] Using simplified single-locus processing.")
+    
+    # Get all genotypes for the region
+    genos = ds._seqs.genotypes[r_idx, s_idx]
+    
+    if verbose:
+        print(f"[get_single_locus_hap_matrix] Retrieved {len(genos.data)} genotype entries.")
+
+    # Extract variant indices and offsets
+    v_idxs = genos.data
+    offsets = genos.offsets
+
+    if verbose:
+        print(f"[get_single_locus_hap_matrix] Found {len(np.unique(v_idxs))} unique variant indices.")
+
+    # Get unique variant indices
+    col_v_idxs = np.unique(v_idxs)
+    
+    if verbose:
+        print(f"[get_single_locus_hap_matrix] Processing {len(col_v_idxs)} variants.")
+
+    if offsets.ndim == 1:
+        n_slices = len(offsets) - 1
+        start_offs = offsets[:-1]
+        end_offs = offsets[1:]
+    elif offsets.ndim == 2:
+        n_slices = offsets.shape[1]
+        start_offs = offsets[0]
+        end_offs = offsets[1]
+    else:
+        raise ValueError(f"offsets must be 1D or 2D, got {offsets.ndim}D")
+
+    if verbose:
+        print(f"[get_single_locus_hap_matrix] Building haplotype ID dictionaries for {n_slices} slices.")
+
+    hap_ids = dict()
+    hap_id_nr = dict()
+    hap_membership = np.empty(n_slices, dtype=np.uint32)
+    n_hap_ids = 0
+    for o_idx in range(n_slices):
+        o_s = start_offs[o_idx]
+        o_e = end_offs[o_idx]
+        _v_idxs = v_idxs[o_s:o_e]
+        byts = _v_idxs.tobytes()
+        if byts not in hap_ids:
+            hap_ids[byts] = _v_idxs
+            hap_id_nr[byts] = n_hap_ids
+            n_hap_ids += 1
+        hap_membership[o_idx] = hap_id_nr[byts]
+
+    n_uniq_haps = len(hap_ids)
+
+    if verbose:
+        print(f"[get_single_locus_hap_matrix] {n_uniq_haps} unique haplotypes identified.")
+
+    hap_id_lens = np.array([len(h) for h in hap_ids.values()])
+    hap_id_offsets = np.empty(n_uniq_haps + 1, dtype=np.int64)
+    hap_id_offsets[0] = 0
+    hap_id_offsets[1:] = np.cumsum(hap_id_lens)
+    hap_ids = np.concatenate(list(hap_ids.values()))
+
+    n_uniq_vars = len(col_v_idxs)
+    if verbose:
+        print(f"[get_single_locus_hap_matrix] Building haplotype matrix of shape ({n_uniq_haps}, {n_uniq_vars}).")
+
+    hap_matrix = np.zeros((n_uniq_haps, n_uniq_vars), dtype=np.bool_)
+    htable = HashTable(n_uniq_vars * 2, dtype=col_v_idxs.dtype)
+    htable.add(col_v_idxs)
+    for i in range(n_uniq_haps):
+        o_s = hap_id_offsets[i]
+        o_e = hap_id_offsets[i + 1]
+        hap_matrix[i, htable.get(hap_ids[o_s:o_e])] = True
+
+    if reshape is not None:
+        hap_membership = hap_membership.reshape(*reshape, ds.ploidy)
+    else:
+        hap_membership = hap_membership.reshape(-1, ds.ploidy)
+
+    hap_ids = gvl.Ragged.from_offsets(
+        hap_ids, (len(hap_id_offsets) - 1, None), hap_id_offsets
+    )
+
+    if not unique_haplotypes:
+        if verbose:
+            print("[get_single_locus_hap_matrix] Expanding haplotype matrix to all haplotypes (not unique only).")
+        hap_matrix = hap_matrix[hap_membership]
+
+    if verbose:
+        print("[get_single_locus_hap_matrix] Extracting variant metadata.")
+
+    meta = vcf._index.df[col_v_idxs].select(
+        Chromosome=pl.from_pandas(vcf._index.gr.Chromosome.iloc[col_v_idxs]),
+        Start=pl.col("POS") - 1,
+        End=pl.col("POS") + pl.col("ILEN").list.get(0).clip(upper_bound=0),
+        REF=pl.col("REF"),
+        ALT=pl.col("ALT").list.get(0),
+    ).to_pandas()
+    meta.index.name = 'variant'
+    meta = meta.to_xarray()
+
+    if verbose:
+        print("[get_single_locus_hap_matrix] Constructing xarray DataArray and merging metadata.")
+
+    # (s p v)
+    hap_matrix = xr.DataArray(
+        hap_matrix,
+        dims=("sample", "ploid", "variant"),
+        coords={"sample": ds.subset_to(samples=samples).samples},
+        name='hap_matrix'
+    ).to_dataset()
+    hap_matrix = hap_matrix.merge(meta)
+
+    if verbose:
+        print("[get_single_locus_hap_matrix] Done.")
 
     return hap_ids, hap_membership, hap_matrix, col_v_idxs
 

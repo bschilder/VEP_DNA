@@ -427,9 +427,23 @@ def sort_by_reverse_string(df,
     
     return df
 
+def get_clinsig_order(reverse=True):
+    # Define clinsig order: pathogenic, likely pathogenic, VUS, likely benign, benign
+    order = [
+        "path", "pathogenic", "Pathogenic",
+        "likely_path", "likely_pathogenic", "likely pathogenic", "Likely Pathogenic", "Likely_pathogenic",
+        "VUS", "vus", "Vus",
+        "likely_benign", "likely benign", "Likely Benign", "Likely_benign",
+        "benign", "Benign"
+    ]
+    if reverse:
+        order = order[::-1]
+    return order
+
+
 def sort_by_clinsig(df,
                     clinsig_col='clinsig',
-                    clinsig_order=get_clinsig_palette().keys(),
+                    clinsig_order=get_clinsig_order(),
                     ascending=True
                     ):
     """
@@ -457,7 +471,7 @@ def sort_by_clinsig(df,
         key=lambda x: x.map({k: i for i, k in enumerate(list(clinsig_order))}),
         ascending=ascending
     )
-
+    
 def one_hot_seq(seq: str, 
                 transpose: bool = True,
                 **kwargs) -> np.ndarray:
@@ -670,26 +684,50 @@ def add_variant_name(df,
 
     if end_col not in df.columns:
         end_col = None 
-    
-    result = df.with_columns(pl.concat_str([
-        pl.lit('chr'),
-        pl.col(chrom_col).cast(pl.Utf8).str.replace('chr', ''),
-        pl.lit(':'),
-        pl.col(start_col).cast(pl.Utf8),
-        pl.lit('-'),
-        pl.when(pl.lit(end_col).is_null())
-        .then((pl.col(start_col).cast(pl.Int32) + pl.col(ref_col).cast(pl.Utf8).str.len_chars()).cast(pl.Int32))
-        .otherwise(pl.col(end_col).cast(pl.Utf8) if end_col is not None else pl.col(start_col).cast(pl.Utf8)),
-        pl.lit('_'),
-        pl.col(ref_col).cast(pl.Utf8),
-        pl.lit('_'),
-        pl.col(alt_col).cast(pl.Utf8)
-    ]).alias(alias))
+
+    # Logic to set end to start+0 if alt is None or NA
+    # We'll introduce a conditional: 
+    # - if alt_col is None, null, or NA, end = start+0
+    # - else: standard as before.
+    # We'll check this per row.
+
+    # Define what values we treat as NA for alt
+    na_values = [None, '', 'NA', 'NaN', 'nan']
+
+    result = df.with_columns(
+        pl.concat_str([
+            pl.lit('chr'),
+            pl.col(chrom_col).cast(pl.Utf8).str.replace('chr', ''),
+            pl.lit(':'),
+            pl.col(start_col).cast(pl.Utf8),
+            pl.lit('-'),
+            pl.when(
+                # if end_col is not present: infer end
+                pl.lit(end_col).is_null()
+            )
+            .then(
+                pl.when(
+                    pl.col(alt_col).is_null() | (pl.col(alt_col).cast(pl.Utf8).str.to_lowercase().is_in(na_values))
+                )
+                .then((pl.col(start_col).cast(pl.Int32) + pl.lit(0)).cast(pl.Int32))
+                .otherwise((pl.col(start_col).cast(pl.Int32) + pl.col(ref_col).cast(pl.Utf8).str.len_chars()).cast(pl.Int32))
+            )
+            .otherwise(
+                # Use provided end_col (or start_col if end_col is None, but this path is unreachable here)
+                pl.col(end_col).cast(pl.Utf8) if end_col is not None else pl.col(start_col).cast(pl.Utf8)
+            ),
+            pl.lit('_'),
+            pl.col(ref_col).cast(pl.Utf8),
+            pl.lit('_'),
+            pl.col(alt_col).cast(pl.Utf8)
+        ]).alias(alias)
+    )
     
     if was_pandas:
         result = result.to_pandas()
     
     return result
+
 
 def vep_to_matrix(
     vep_df,
@@ -1025,3 +1063,33 @@ def rasterize_figure(fig, types=["PathCollection", "Line2D", "Rectangle"]):
             # Do NOT rasterize text
 
     return fig
+
+
+
+def set_rcparams_nature(styles=['nature', 'no-latex']):
+    """
+    Set RC parameters to match Nature style.
+
+    Parameters
+    ----------
+    styles : list of str, optional
+        List of styles to use. Default is ['nature', 'no-latex'].
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib as mpl
+    import scienceplots
+
+    plt.style.use(styles)
+    plt.rcParams["font.family"] = "Nimbus Sans"
+    plt.rcParams['font.sans-serif'] = ["Arial"]
+
+    # Optional: Ensure fonts are embedded as editable type 42 fonts for Illustrator
+    plt.rcParams['pdf.fonttype'] = 42
+
+
+def set_plot_style():
+    import matplotlib.pyplot as plt
+
+    plt.gca().spines['top'].set_visible(False)
+    plt.gca().spines['right'].set_visible(False)
+    plt.tight_layout()
