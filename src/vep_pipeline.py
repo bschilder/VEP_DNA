@@ -27,6 +27,7 @@ def get_model_to_batchsize_map(model_name=None,
     bsmap = {
         "spliceai": default,
         "flashzoi": default,
+        "alphagenome": 4,  # JAX-based, lower batch size due to memory
         "evo2_7b": default,
         "evo2_40b": default,
         "evo2_7b_base": default,
@@ -62,6 +63,10 @@ def get_model_to_metric_map(model_name=None):
                      "COVR"
                     #  "pca_css_mean"
                      ],
+        "alphagenome": ["LFC_abs_mean",
+                        "COVR",
+                        "delta_mean",
+                        "delta_abs_mean"],
         "evo2_7b": ["VEP"],
         "evo2_40b": ["VEP"],
         "evo2_7b_base": ["VEP"],
@@ -191,8 +196,6 @@ def vep_pipeline(site_ds,
         verbose (bool): If True, print verbose output.
         device (str): Device to run the model on. 
     """ 
-    import torch
-
     # Check checkpoint_frequency is valid
     checkpoint_frequency_opts = ["site", "sample", "ploid"]
     if checkpoint_frequency not in checkpoint_frequency_opts:
@@ -243,7 +246,11 @@ def vep_pipeline(site_ds,
 
     # Get the device
     if device is None:
-        device = utils.get_device() 
+        _needs_torch = any(m not in ("alphagenome",) for m in run_models)
+        if _needs_torch:
+            device = utils.get_device()
+        else:
+            device = "cpu"  # Placeholder; AlphaGenome ignores device
 
     # Initialize raw results
     if return_raw:
@@ -457,7 +464,11 @@ def vep_pipeline(site_ds,
                 len_seq_slots = {"len_seq_wt":seq_wt.shape[-1],
                                "len_seq_mut":seq_mut.shape[-1]}
                 del seq_wt, seq_mut
-                torch.cuda.empty_cache() 
+                try:
+                    import torch
+                    torch.cuda.empty_cache()
+                except ImportError:
+                    pass  # No torch (e.g. JAX-only env)
 
                 if verbose>1:
                     print(f"Storing VEP results")
@@ -775,11 +786,22 @@ def run_vep(
     elif model_name == "flashzoi":
         from src.flashzoi import run_vep as _run_vep
         return _run_vep(
-            model=model, 
-            tokenizer=tokenizer, 
-            seq_wt=seq_wt, 
+            model=model,
+            tokenizer=tokenizer,
+            seq_wt=seq_wt,
             seq_mut=seq_mut,
-            device=device, 
+            device=device,
+            verbose=verbose,
+            **kwargs
+        )
+    elif model_name == "alphagenome":
+        from src.alphagenome import pipeline_run_vep as _run_vep
+        return _run_vep(
+            model=model,
+            tokenizer=tokenizer,
+            seq_wt=seq_wt,
+            seq_mut=seq_mut,
+            device=device,
             verbose=verbose,
             **kwargs
         )
@@ -825,9 +847,13 @@ def load_model(model_name,
         return _load_model(device=device, eval=eval, **kwargs)
         
     elif model_name == "flashzoi":
-        from src.flashzoi import load_model as _load_model 
+        from src.flashzoi import load_model as _load_model
         return _load_model(device=device, eval=eval, **kwargs)
-    
+
+    elif model_name == "alphagenome":
+        from src.alphagenome import load_model as _load_model
+        return _load_model(**kwargs)
+
     elif model_name.startswith("evo2"):
         from src.evo2 import load_model as _load_model
         return _load_model(device=device, eval=eval, **kwargs) 
@@ -851,7 +877,11 @@ def load_tokenizer(model_name):
     elif model_name == "flashzoi":
         from src.flashzoi import load_tokenizer as _load_tokenizer
         return _load_tokenizer()
-    
+
+    elif model_name == "alphagenome":
+        from src.alphagenome import load_tokenizer as _load_tokenizer
+        return _load_tokenizer()
+
     elif model_name.startswith("evo2"):
         from src.evo2 import load_tokenizer as _load_tokenizer
         return _load_tokenizer()

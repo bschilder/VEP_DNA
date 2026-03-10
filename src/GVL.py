@@ -10,7 +10,11 @@ from typing import Literal
 from hirola import HashTable
 import awkward as ak
 from genoray import VCF
-from genoray._vcf import INT64_MAX
+try:
+    from genoray._vcf import INT64_MAX
+except ImportError:
+    import numpy as _np
+    INT64_MAX = int(_np.iinfo(_np.int64).max)
 import zipfile  
 from IPython.display import clear_output 
 

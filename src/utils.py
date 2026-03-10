@@ -387,11 +387,12 @@ def as_numpy(x, to_cpu=True):
     if isinstance(x, np.ndarray):
         return x
     
-    import torch
-    if isinstance(x, torch.Tensor):
-        return x.cpu().numpy() if to_cpu else x.numpy()
-    
     import importlib.util
+    if importlib.util.find_spec("torch") is not None:
+        import torch
+        if isinstance(x, torch.Tensor):
+            return x.cpu().numpy() if to_cpu else x.numpy()
+
     if importlib.util.find_spec("tensorflow") is not None:
         import tensorflow as tf
         if isinstance(x, tf.Tensor):

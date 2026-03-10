@@ -1,0 +1,38 @@
+name: alphagenome
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python>=3.10,<3.13
+  - pooch
+  - pandas
+  - polars
+  - numpy
+  - tqdm
+  - matplotlib
+  - seaborn
+  ## Necessary for Elzar HPC
+  - gcc
+  - libgcc
+  - libstdcxx-ng
+  - rust
+  ## Bioinformatics
+  - bioconda::samtools
+  - bioconda::htslib  # provides bgzip
+  ## Optional
+  - bioconda::pgenlib # Optional
+  - xarray # Optional
+  - zarr # Optional
+  - dask # Optional
+  - datashader # Scalable visualization for population-level track plots
+  - pip
+  ## Jupyter
+  - jupyter
+  - jupyterlab
+  - ipywidgets
+  - pip:
+      - genvarloader
+      - alphagenome-research @ git+https://github.com/google-deepmind/alphagenome_research.git  # Google DeepMind AlphaGenome (JAX-based)
+      - jax[cuda12]  # JAX with GPU support
+      - aiohttp  # Required by fsspec for HuggingFace model downloads
+      - ipykernel

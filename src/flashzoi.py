@@ -739,12 +739,40 @@ def plot_covr_interhaplotype_variation(
     title_position="top_right",
     title_prefix="Inter-haplotype Variation in Flashzoi VEP\n",
     show_legend=True,
+    use_datashader=False,
+    datashader_plot_width=1000,
+    datashader_plot_height=400,
+    datashader_line_width=0,
+    datashader_how="eq_hist",
+    datashader_alpha=1.0,
+    datashader_cmap="rainbow",
+    datashader_interpolation="bilinear",
 ):
     """
     Plot inter-haplotype variation for a given COVR track, or a facet plot if i is a list.
 
     Parameters
     ----------
+    use_datashader : bool, default=False
+        If True, use datashader timeseries to plot each haplotype as its own line
+        (see https://datashader.org/user_guide/Timeseries.html). Avoids hexbin;
+        no density colorbar is drawn.
+    datashader_plot_width : int, default=1000
+        Raster width when use_datashader=True.
+    datashader_plot_height : int, default=400
+        Raster height when use_datashader=True.
+    datashader_line_width : float, default=1
+        Line width for datashader Canvas.line (0 = sharp/pixelated; 1+ for antialiased, smoother lines).
+    datashader_how : str, default="linear"
+        Colormap scaling for tf.shade: "linear" or "eq_hist".
+    datashader_alpha : float, default=1.0
+        Alpha (opacity) of the datashader raster when use_datashader=True (0=transparent, 1=opaque).
+    datashader_cmap : list, str, or None, default=None
+        Colormap for tf.shade when use_datashader=True. Can be a matplotlib colormap name (e.g. "viridis",
+        "rainbow", "plasma"), a list of colors (e.g. ["white", "blue"]), or None for datashader default.
+    datashader_interpolation : str, default="nearest"
+        Interpolation for displaying the datashader raster. Use "nearest" for sharp, crisp pixels (no blur);
+        use "bilinear" or "bicubic" for smoother but softer appearance when the raster is scaled.
     ref_line_kwargs : dict, default={"color": "dimgrey", "lw": 1, "linestyle": ":"}
         Keyword arguments passed to matplotlib for styling the reference line.
         Controls the appearance of the reference data line.
@@ -942,13 +970,62 @@ def plot_covr_interhaplotype_variation(
         xpos = np.tile(x_bins, n_samples)
         yval = data_np_keep.reshape(-1)
 
-        if gridsize_x is None:
-            gridsize_x = window_length
+        if use_datashader:
+            import pandas as pd
+            import datashader as ds
+            import datashader.transfer_functions as tf
+            # Each row = one haplotype (one line); columns = positions (shared x)
+            walks = pd.DataFrame(data_np_keep, columns=list(range(n_pos)))
+            track_ymin = track_ymins[indices.index(track_idx)]
+            track_ymax = track_ymaxs[indices.index(track_idx)]
+            x_range = (float(x_bins[0]), float(x_bins[-1]))
+            y_range = (float(track_ymin), float(track_ymax))
+            cvs = ds.Canvas(
+                plot_width=datashader_plot_width,
+                plot_height=datashader_plot_height,
+                x_range=x_range,
+                y_range=y_range,
+            )
+            agg = cvs.line(
+                walks,
+                x=x_bins,
+                y=list(range(n_pos)),
+                axis=1,
+                agg=ds.count(),
+                line_width=datashader_line_width,
+            )
+            shade_kw = {"how": datashader_how}
+            if datashader_cmap is not None:
+                if isinstance(datashader_cmap, str):
+                    # Matplotlib colormap name -> list of colors for datashader
+                    import matplotlib.cm as mpl_cm
+                    import matplotlib.colors as mpl_colors
+                    cmap = mpl_cm.get_cmap(datashader_cmap)
+                    shade_kw["cmap"] = [mpl_colors.to_hex(cmap(x)) for x in np.linspace(0, 1, 256)]
+                else:
+                    shade_kw["cmap"] = datashader_cmap
+            img = tf.shade(agg.astype("uint32"), **shade_kw)
+            try:
+                arr = np.asarray(img.to_pil())
+            except AttributeError:
+                arr = np.array(img)
+            # Datashader/PIL use top-left origin (row 0 = top); imshow(origin='lower') expects row 0 = bottom
+            arr = np.flipud(arr)
+            ax.imshow(
+                arr,
+                extent=[x_range[0], x_range[1], y_range[0], y_range[1]],
+                aspect="auto",
+                origin="lower",
+                interpolation=datashader_interpolation,
+                alpha=datashader_alpha,
+            )
         else:
-            gridsize_x = min(gridsize_x, window_length)
-        
-        hb = ax.hexbin(xpos, yval, gridsize=(gridsize_x, gridsize_y), cmap="rainbow", bins='log')
-        hexbin_handles.append(hb)
+            if gridsize_x is None:
+                gridsize_x = window_length
+            else:
+                gridsize_x = min(gridsize_x, window_length)
+            hb = ax.hexbin(xpos, yval, gridsize=(gridsize_x, gridsize_y), cmap="rainbow", bins='log')
+            hexbin_handles.append(hb)
         
         # Plot the reference line for this facet (using this facet's own data_ref)
         ax.plot(x_bins, data_ref, **ref_line_kwargs)
@@ -1144,8 +1221,6 @@ def plot_covr_interhaplotype_variation(
             ax.set_ylim(track_ymin, track_ymax)
 
     # ------------ COLORBAR PATCH ------------
-    # Matplotlib PDF backend bugs often break colorbar for hexbin when using inset_axes or hidden cax.
-    # So instead, create a colorbar *directly on the figure* with a manual position, and keep references.
     import matplotlib as mpl
     from matplotlib.lines import Line2D
     if is_faceted:
@@ -1196,28 +1271,29 @@ def plot_covr_interhaplotype_variation(
                            "Clinical Variant",
                            color=label_color, rotation=90, va='top', ha='right')
 
-        # Use a colorbar *axes* attached to the figure, not to an axes or its bbox
-        # This avoids the "broken color block" seen in PDF outputs
-        from mpl_toolkits.axes_grid1 import make_axes_locatable
-        divider = make_axes_locatable(axes[-1])
-        cax = fig.add_axes([0.965, axes[-1].get_position().y0, 0.02, axes[-1].get_position().height])
-        colorbar_obj = fig.colorbar(
-            hexbin_handles[0], 
-            cax=cax, 
-            orientation="vertical",
-            label=r"$log_{10}(\text{Haplotype Density})$"
-        )
-        colorbar_obj.ax.tick_params(labelsize=10)
-        colorbar_obj.outline.set_linewidth(0.75)
-        fig._persistent_colorbar = colorbar_obj
-        fig._persistent_cax = cax
+        if hexbin_handles:
+            # Use a colorbar *axes* attached to the figure, not to an axes or its bbox
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            divider = make_axes_locatable(axes[-1])
+            cax = fig.add_axes([0.965, axes[-1].get_position().y0, 0.02, axes[-1].get_position().height])
+            colorbar_obj = fig.colorbar(
+                hexbin_handles[0], 
+                cax=cax, 
+                orientation="vertical",
+                label=r"$log_{10}(\text{Haplotype Density})$"
+            )
+            colorbar_obj.ax.tick_params(labelsize=10)
+            colorbar_obj.outline.set_linewidth(0.75)
+            fig._persistent_colorbar = colorbar_obj
+            fig._persistent_cax = cax
     else:
-        colorbar_obj = plt.colorbar(
-            hexbin_handles[0], ax=axes[0], 
-            orientation="vertical",
-            label=r"$log_{10}(\text{Haplotype Density})$"
-        )
-        fig._persistent_colorbar = colorbar_obj
+        if hexbin_handles:
+            colorbar_obj = plt.colorbar(
+                hexbin_handles[0], ax=axes[0], 
+                orientation="vertical",
+                label=r"$log_{10}(\text{Haplotype Density})$"
+            )
+            fig._persistent_colorbar = colorbar_obj
         plt.tight_layout(rect=(0,0,0.96,1))
     
     # Show legend if requested
