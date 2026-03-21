@@ -533,6 +533,133 @@ def test_epistasis_across_models(
     }
 
 
+_CLINSIG_STATS_DF_COLUMNS = [
+    "test",
+    "test_short_name",
+    "group1",
+    "group2",
+    "n1",
+    "n2",
+    "statistic_name",
+    "statistic",
+    "pvalue",
+    "effect_size",
+    "effect_size_kind",
+    "correction_method",
+]
+
+
+def _cohens_d_independent(a, b):
+    a = np.asarray(a, dtype=float).ravel()
+    b = np.asarray(b, dtype=float).ravel()
+    a = a[~np.isnan(a)]
+    b = b[~np.isnan(b)]
+    n1, n2 = len(a), len(b)
+    if n1 < 2 or n2 < 2:
+        return np.nan
+    v1, v2 = np.var(a, ddof=1), np.var(b, ddof=1)
+    pooled = np.sqrt(((n1 - 1) * v1 + (n2 - 1) * v2) / (n1 + n2 - 2))
+    if pooled == 0 or np.isnan(pooled):
+        return np.nan
+    return float((np.mean(a) - np.mean(b)) / pooled)
+
+
+def _cliffs_delta(a, b):
+    a = np.asarray(a, dtype=float).ravel()
+    b = np.asarray(b, dtype=float).ravel()
+    a = a[~np.isnan(a)]
+    b = b[~np.isnan(b)]
+    n1, n2 = len(a), len(b)
+    if n1 == 0 or n2 == 0:
+        return np.nan
+    greater = int(np.sum(a[:, None] > b[None, :]))
+    less = int(np.sum(a[:, None] < b[None, :]))
+    return float((greater - less) / (n1 * n2))
+
+
+def _cohens_dz_paired(a, b):
+    a = np.asarray(a, dtype=float).ravel()
+    b = np.asarray(b, dtype=float).ravel()
+    ok = ~np.isnan(a) & ~np.isnan(b)
+    a, b = a[ok], b[ok]
+    if len(a) < 2:
+        return np.nan
+    d = a - b
+    sd = np.std(d, ddof=1)
+    if sd == 0 or np.isnan(sd):
+        return np.nan
+    return float(np.mean(d) / sd)
+
+
+def _effect_size_for_pairwise_test(y1, y2, test_description):
+    """Effect size aligned with common choices for statannotations tests."""
+    desc = (test_description or "").lower()
+    y1 = np.asarray(y1, dtype=float).ravel()
+    y2 = np.asarray(y2, dtype=float).ravel()
+    y1 = y1[~np.isnan(y1)]
+    y2 = y2[~np.isnan(y2)]
+
+    if "mann-whitney" in desc or "kruskal-wallis" in desc:
+        return _cliffs_delta(y1, y2), "cliffs_delta"
+    if "levene" in desc:
+        return np.nan, "n/a"
+    if "brunner" in desc:
+        return _cliffs_delta(y1, y2), "cliffs_delta"
+    if "welch" in desc or ("independent" in desc and "t-test" in desc):
+        return _cohens_d_independent(y1, y2), "cohens_d"
+    if "paired" in desc and "t-test" in desc:
+        if len(y1) != len(y2):
+            return np.nan, "cohens_dz"
+        return _cohens_dz_paired(y1, y2), "cohens_dz"
+    if "wilcoxon" in desc:
+        if len(y1) != len(y2):
+            return np.nan, "cohens_dz"
+        return _cohens_dz_paired(y1, y2), "cohens_dz"
+
+    return np.nan, "n/a"
+
+
+def _clinsig_pairwise_stats_df(bar_df, x, y, annotator):
+    from statannotations.stats.StatResult import StatResult
+
+    empty = pd.DataFrame(columns=_CLINSIG_STATS_DF_COLUMNS)
+    if getattr(annotator, "annotations", None) is None:
+        return empty
+
+    rows = []
+    for ann in annotator.annotations:
+        data = ann.data
+        if not isinstance(data, StatResult):
+            continue
+        if not hasattr(data, "group1") or not hasattr(data, "group2"):
+            continue
+        g1, g2 = data.group1, data.group2
+        y1 = bar_df.loc[bar_df[x] == g1, y].dropna().to_numpy()
+        y2 = bar_df.loc[bar_df[x] == g2, y].dropna().to_numpy()
+        eff, eff_kind = _effect_size_for_pairwise_test(
+            y1, y2, data.test_description
+        )
+        rows.append(
+            {
+                "test": data.test_description,
+                "test_short_name": data.test_short_name,
+                "group1": g1,
+                "group2": g2,
+                "n1": int(len(y1)),
+                "n2": int(len(y2)),
+                "statistic_name": data.stat_str,
+                "statistic": data.stat_value,
+                "pvalue": data.pvalue,
+                "effect_size": eff,
+                "effect_size_kind": eff_kind,
+                "correction_method": data.correction_method,
+            }
+        )
+    if not rows:
+        return empty
+    return pd.DataFrame(rows, columns=_CLINSIG_STATS_DF_COLUMNS)
+
+
 def plot_clinsig_interaction_strength(
     ridge_df,
     annot_df=None,
@@ -559,6 +686,7 @@ def plot_clinsig_interaction_strength(
     yaxis_scientific=False,  # New argument to use scientific notation on y-axis
     show_xticklabels=True,  # New argument to show/hide x-axis tick labels
     yaxis_log=False,  # New argument to use log scale on y-axis
+    box_width=0.8,
 ):
     """
     Create boxplots showing interaction strength by clinical significance with optional faceting.
@@ -591,6 +719,9 @@ def plot_clinsig_interaction_strength(
         If False, hide x-axis tick labels.
     yaxis_log : bool, default False
         If True, use log scale on y-axis.
+    box_width : float, default 0.8
+        Passed to ``seaborn.boxplot`` as ``width``. ``hue=x`` is only for
+        coloring; ``dodge=False`` is set so boxes are not squeezed.
     palette : dict, optional
         Color palette for different clinical significance categories.
         Defaults to utils.get_clinsig_palette().
@@ -632,7 +763,13 @@ def plot_clinsig_interaction_strength(
             The axes object(s). For faceted plots, this is an array of axes.
         - 'data': pandas.DataFrame
             The processed data used for plotting
-    
+        - 'stats': pandas.DataFrame
+            One row per pairwise comparison used for annotations: test name,
+            groups, sample sizes (n1, n2), statistic name/value, p-value,
+            effect size and ``effect_size_kind`` (e.g. ``cliffs_delta`` for
+            Mann--Whitney, ``cohens_d`` for independent t-tests). Empty when
+            ``facet`` is set (faceted plots do not run pairwise tests here).
+
     Examples
     --------
     >>> # Basic plot
@@ -765,12 +902,14 @@ def plot_clinsig_interaction_strength(
         # Create faceted plot
         g = sns.FacetGrid(bar_df, col=facet, height=figsize[1], aspect=figsize[0]/figsize[1])
         g.map_dataframe(
-            sns.boxplot, 
-            x=x, 
-            y=y, 
-            hue=x, 
-            palette=palette_cleaned, 
-            order=clinsig_order_cleaned, 
+            sns.boxplot,
+            x=x,
+            y=y,
+            hue=x,
+            palette=palette_cleaned,
+            order=clinsig_order_cleaned,
+            dodge=False,
+            width=box_width,
             showfliers=False,
             medianprops={'color': 'black', 'linewidth': 1},
             whiskerprops={'color': 'black', 'linewidth': 1},
@@ -816,7 +955,12 @@ def plot_clinsig_interaction_strength(
             ax.spines['right'].set_visible(False)
         
         plt.tight_layout()
-        return {'fig': g.fig, 'ax': g.axes, 'data': bar_df}
+        return {
+            'fig': g.fig,
+            'ax': g.axes,
+            'data': bar_df,
+            'stats': pd.DataFrame(columns=_CLINSIG_STATS_DF_COLUMNS),
+        }
     else:
         # Original non-faceted plot
         plt.figure(figsize=figsize)
@@ -829,6 +973,8 @@ def plot_clinsig_interaction_strength(
             hue=x,
             palette=palette_cleaned,
             order=clinsig_order_cleaned,
+            dodge=False,
+            width=box_width,
             showfliers=False,
             medianprops={'color': 'black', 'linewidth': 1},
             whiskerprops={'color': 'black', 'linewidth': 1},
@@ -910,13 +1056,14 @@ def plot_clinsig_interaction_strength(
             **annotator_kwargs
         )
         annotator.apply_and_annotate()
+        stats = _clinsig_pairwise_stats_df(bar_df, x, y, annotator)
 
         plt.tight_layout()
         # Remove the top and right spines (lines) from the plot margin
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
 
-        return {'fig': plt.gcf(), 'ax': ax, 'data': bar_df}
+        return {'fig': plt.gcf(), 'ax': ax, 'data': bar_df, 'stats': stats}
 
 
 def plot_merged_clustermaps(
