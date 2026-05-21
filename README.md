@@ -20,6 +20,37 @@ Each model typically has its own conda environment (see [Environment creation](#
 
 ---
 
+## System requirements
+
+- **Operating systems tested:** Linux (Ubuntu 20.04+ / RHEL 8+ on HPC), macOS 14+
+- **Python:** 3.12.9 (3.10–3.12 also supported)
+- **Key dependencies:** see `conda/*.yml` for per-model environments (SpliceAI, Flashzoi, DECIMA, Evo2, DNABERT, AlphaGenome, MultiMolecule, GenVarLoader); top-level base env in `conda/conda.yml`
+- **Non-standard hardware:** NVIDIA GPU required for model inference (tested on A100 80 GB and H100 80 GB); CPU-only runs are possible for small examples but not recommended
+
+## Installation
+
+See the [Getting started](#getting-started) section below for step-by-step instructions. Typical install time on a workstation with conda already installed:
+
+- **~10–20 min** to create a single model's conda environment (e.g. `conda/spliceai.yml`)
+- Additional time on first run for one-time downloads of model weights
+
+> *Maintainer to confirm measured timings before final submission.*
+
+## Demo
+
+The fastest end-to-end demo is **`notebooks/vep_dna_pipeline.ipynb`**, which runs the pipeline on a chr22 subset of 1000 Genomes data.
+
+- **Expected runtime:** ~3–5 min on 1× A100 GPU for the chr22 subset
+- **Expected output:** a zarr dataset of per-haplotype VEP scores, plus summary plots inline in the notebook
+
+> *Maintainer to confirm measured timings before final submission.*
+
+## License
+
+This project is licensed under the **MIT License** (OSI-approved). See [LICENSE](LICENSE) for the full terms.
+
+---
+
 ## Repository structure
 
 ```
