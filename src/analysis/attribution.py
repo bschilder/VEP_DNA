@@ -168,9 +168,17 @@ def wtvariants_to_vep_linear_model(
     
     # Compute epistasis within model if requested
     if test_epistasis:
+        import warnings
+        warnings.warn(
+            "The within-model epistasis test here builds its interaction regressor as "
+            "`WT * deviation` with a per-pair scalar `deviation`, making it collinear with "
+            "the main WT term; it has ~no power to detect non-additivity (delta_r2 ~ 0, "
+            "p ~ 1). Use `test_epistasis_pairwise()` for a valid pairwise epistasis test.",
+            stacklevel=2,
+        )
         if verbose:
             print("Computing epistasis within model...")
-        
+
         from scipy.stats import f as f_distribution
         from sklearn.metrics import r2_score, mean_squared_error
         from tqdm import tqdm
@@ -363,11 +371,20 @@ def test_epistasis_across_models(
         - 'epistasis_results': dict with summary statistics
         - 'updated_models': dict with updated model dictionaries (including epistasis results)
     """
+    import warnings
+    warnings.warn(
+        "test_epistasis_across_models builds its interaction regressor as "
+        "`WT * (joint_effect - expected_additive)` with a per-pair scalar multiplier, "
+        "making it collinear with the main WT term; it has ~no power to detect "
+        "non-additivity (delta_r2 ~ 0, p ~ 1). Use `test_epistasis_pairwise()` for a "
+        "valid pairwise epistasis test.",
+        stacklevel=2,
+    )
     from sklearn.linear_model import Ridge, Lasso
     from scipy.stats import f as f_distribution
     from sklearn.metrics import r2_score, mean_squared_error
     from tqdm import tqdm
-    
+
     epistasis_alpha = epistasis_alpha or 1.0
     ModelClass = Ridge if model_type == "ridge" else Lasso
     model_kwargs_full = dict(alpha=epistasis_alpha, random_state=random_state, fit_intercept=True, **model_kwargs)
@@ -2554,3 +2571,165 @@ def plot_marginal_effect_by_region(
     if show:
         plt.show()
     return g
+
+
+def test_epistasis_pairwise(
+    Xwt,
+    y_vep,
+    min_cooccurrence=10,
+    pvalue_threshold=0.05,
+    fdr=True,
+    add_positions=True,
+    verbose=True,
+):
+    """
+    Standard pairwise epistasis test between co-occurring wild-type (background)
+    variants, for each clinical site.
+
+    This is the statistically valid replacement for the epistasis testing inside
+    ``wtvariants_to_vep_linear_model(test_epistasis=True)`` and
+    ``test_epistasis_across_models``. Those build their "interaction" regressor
+    as ``WT * deviation`` where ``deviation`` is a per-pair *scalar constant*, so
+    the interaction column is collinear with the main ``WT`` term and adds no
+    explanatory power (``delta_r2`` ~ 0, F ~ 0, p ~ 1 for essentially every
+    pair). As a result that test has ~no power to detect non-additivity and
+    should not be used to quantify epistasis.
+
+    For each site (column of ``y_vep``) and each pair of WT variants (i, k) that
+    co-occur in at least ``min_cooccurrence`` haplotypes, two nested models are
+    fit by ordinary least squares (so the F-test follows the standard
+    F-distribution):
+
+        additive model:     VEP_j ~ WT_i + WT_k
+        interaction model:  VEP_j ~ WT_i + WT_k + (WT_i * WT_k)
+
+    A significant improvement of the interaction model over the additive model
+    (F-test on the single extra product term) indicates a non-additive
+    (epistatic) interaction between WT_i and WT_k at site j. The product term
+    ``WT_i * WT_k`` is a genuine, non-collinear regressor.
+
+    Parameters
+    ----------
+    Xwt : pd.DataFrame
+        Haplotype x WT-variant binary matrix.
+    y_vep : pd.DataFrame
+        Haplotype x site (VEP) matrix, aligned to ``Xwt`` by index.
+    min_cooccurrence : int, default=10
+        Minimum number of haplotypes carrying BOTH variants (WT_i=1 and WT_k=1)
+        required to test a pair.
+    pvalue_threshold : float, default=0.05
+        Significance threshold. Applied to the FDR-corrected q-value when
+        ``fdr=True``, otherwise to the raw p-value.
+    fdr : bool, default=True
+        If True, add Benjamini-Hochberg q-values across all tested pairs and use
+        them for the ``is_epistatic`` call (recommended given many tests).
+    add_positions : bool, default=True
+        If True, best-effort parse of genomic positions from variant names.
+    verbose : bool, default=True
+        Print a progress bar and summary.
+
+    Returns
+    -------
+    dict with keys:
+        'epistasis_df' : pd.DataFrame
+            One row per tested (site, wt_variant_1, wt_variant_2) with columns
+            ['site', 'clinical_variant', 'wt_variant_1', 'wt_variant_2',
+             'n_cooccurrence', 'interaction_coef', 'additive_r2',
+             'interaction_r2', 'delta_r2', 'epistasis_fstat', 'epistasis_pvalue',
+             ('epistasis_qvalue'), 'is_epistatic'].
+        'epistasis_results' : dict
+            Summary: 'n_tested', 'n_epistatic', 'n_additive', 'epistasis_rate'.
+    """
+    from itertools import combinations
+    from sklearn.linear_model import LinearRegression
+    from scipy.stats import f as f_distribution
+    from tqdm import tqdm
+
+    wt_cols = list(Xwt.columns)
+    records = []
+    for site in tqdm(list(y_vep.columns), disable=not verbose, desc="Epistasis (pairwise)"):
+        y_all = y_vep[site].values.astype(float)
+        for i, k in combinations(range(len(wt_cols)), 2):
+            wi = Xwt[wt_cols[i]].values.astype(float)
+            wk = Xwt[wt_cols[k]].values.astype(float)
+            mask = ~(np.isnan(wi) | np.isnan(wk) | np.isnan(y_all))
+            if mask.sum() < min_cooccurrence + 4:
+                continue
+            a, b, y = wi[mask], wk[mask], y_all[mask]
+            prod = a * b
+            cooc = int((prod > 0.5).sum())
+            if cooc < min_cooccurrence:
+                continue
+            if a.std() < 1e-10 or b.std() < 1e-10 or prod.std() < 1e-10:
+                continue
+            n = len(y)
+            df_int = n - 4
+            if df_int <= 0:
+                continue
+            X_add = np.column_stack([a, b])
+            X_int = np.column_stack([a, b, prod])
+            m_add = LinearRegression().fit(X_add, y)
+            m_int = LinearRegression().fit(X_int, y)
+            rss_add = float(((y - m_add.predict(X_add)) ** 2).sum())
+            rss_int = float(((y - m_int.predict(X_int)) ** 2).sum())
+            if rss_int <= 1e-12:
+                continue
+            f_stat = max(((rss_add - rss_int) / 1.0) / (rss_int / df_int), 0.0)
+            pvalue = float(1 - f_distribution.cdf(f_stat, 1, df_int))
+            ss_tot = float(((y - y.mean()) ** 2).sum())
+            r2_add = 1 - rss_add / ss_tot if ss_tot > 0 else np.nan
+            r2_int = 1 - rss_int / ss_tot if ss_tot > 0 else np.nan
+            records.append({
+                "site": site,
+                "clinical_variant": site,
+                "wt_variant_1": wt_cols[i],
+                "wt_variant_2": wt_cols[k],
+                "n_cooccurrence": cooc,
+                "interaction_coef": float(m_int.coef_[2]),
+                "additive_r2": r2_add,
+                "interaction_r2": r2_int,
+                "delta_r2": (r2_int - r2_add) if ss_tot > 0 else np.nan,
+                "epistasis_fstat": f_stat,
+                "epistasis_pvalue": pvalue,
+            })
+
+    epistasis_df = pd.DataFrame.from_records(records)
+    if len(epistasis_df):
+        if fdr:
+            p = epistasis_df["epistasis_pvalue"].values
+            m = len(p)
+            order = np.argsort(p)
+            ranked = p[order] * m / (np.arange(m) + 1)
+            q_sorted = np.minimum.accumulate(ranked[::-1])[::-1]
+            q = np.empty(m)
+            q[order] = np.clip(q_sorted, 0, 1)
+            epistasis_df["epistasis_qvalue"] = q
+            epistasis_df["is_epistatic"] = epistasis_df["epistasis_qvalue"] < pvalue_threshold
+        else:
+            epistasis_df["is_epistatic"] = epistasis_df["epistasis_pvalue"] < pvalue_threshold
+
+        if add_positions:
+            def _pos(name):
+                try:
+                    return int(str(name).split(":")[1].split("-")[0])
+                except Exception:
+                    return np.nan
+            epistasis_df["wt_position_1"] = epistasis_df["wt_variant_1"].map(_pos)
+            epistasis_df["wt_position_2"] = epistasis_df["wt_variant_2"].map(_pos)
+            epistasis_df["clinical_position"] = epistasis_df["site"].map(_pos)
+
+        epistasis_df = epistasis_df.sort_values("epistasis_fstat", ascending=False).reset_index(drop=True)
+
+    n_tested = len(epistasis_df)
+    n_epistatic = int(epistasis_df["is_epistatic"].sum()) if n_tested else 0
+    epistasis_results = {
+        "n_tested": n_tested,
+        "n_epistatic": n_epistatic,
+        "n_additive": n_tested - n_epistatic,
+        "epistasis_rate": (n_epistatic / n_tested) if n_tested else 0.0,
+    }
+    if verbose:
+        crit = "q" if fdr else "p"
+        print(f"Pairwise epistasis: tested={n_tested}, epistatic={n_epistatic} "
+              f"({crit} < {pvalue_threshold}), rate={epistasis_results['epistasis_rate']:.4f}")
+    return {"epistasis_df": epistasis_df, "epistasis_results": epistasis_results}
