@@ -38,10 +38,33 @@ See the [Getting started](#getting-started) section below for step-by-step instr
 
 ## Demo
 
-The fastest end-to-end demo is **`notebooks/vep_dna_pipeline.ipynb`**, which runs the pipeline on a chr22 subset of 1000 Genomes data.
+### Quick demo (CPU, no GPU required)
 
-- **Expected runtime:** ~3–5 min on 1× A100 GPU for the chr22 subset
-- **Expected output:** a zarr dataset of per-haplotype VEP scores, plus summary plots inline in the notebook
+A small, self-contained demo of the downstream **surrogate-modeling** step (the
+joint-effect Ridge model and epistasis testing) runs on a normal desktop CPU in
+a few seconds on a tiny bundled, simulated dataset:
+
+```bash
+python demo/run_demo.py
+```
+
+- **Expected runtime:** < 5 s on CPU.
+- **Expected output:** `demo/output/interaction_df.csv` and `epistasis_df.csv`,
+  matching the committed `demo/expected_output/` (deterministic, `random_state=42`).
+
+See [`demo/README.md`](demo/README.md) for details.
+
+### Full pipeline demo (GPU required)
+
+The end-to-end VEP pipeline is in **`notebooks/vep_dna_pipeline.ipynb`**, which
+runs the DNA sequence models on a chr22 subset of 1000 Genomes data.
+
+> **⚠️ Hardware requirement:** DNA sequence-model inference (SpliceAI, Flashzoi/
+> Borzoi, etc.) **requires a CUDA-capable NVIDIA GPU** (tested on A100/H100
+> 80 GB). This step cannot be meaningfully run on CPU.
+
+- **Expected runtime:** ~3–5 min on 1× A100 GPU for the chr22 subset.
+- **Expected output:** a zarr dataset of per-haplotype VEP scores, plus summary plots inline in the notebook.
 
 > *Timings are approximate and will vary with hardware, network speed, and model-weight cache state.*
 
@@ -152,6 +175,25 @@ Notebooks are in **`notebooks/`**. Run them from the **repository root** (they s
 | [COVR_test.ipynb](notebooks/COVR_test.ipynb) | **COVR / environment test**: GPU and path setup for a COVR-related run. |
 
 ---
+
+## Reproducing manuscript results
+
+The notebooks above reproduce the DNA-side analyses and figures. Run each from
+the repository root in the relevant conda environment (GPU required for the
+model-inference notebooks). The main mappings:
+
+| Manuscript result | Notebook(s) |
+|---|---|
+| Per-haplotype VEP scores (SpliceAI / Flashzoi) | [vep_dna_pipeline.ipynb](notebooks/vep_dna_pipeline.ipynb) |
+| VEP analysis & ClinVar benchmarking | [vep_analysis.ipynb](notebooks/vep_analysis.ipynb) |
+| Population-specific UTR effects | [vep_population_analysis.ipynb](notebooks/vep_population_analysis.ipynb) |
+| Variant attribution & epistasis (joint-effect model, F-test) | [variant_attribution_SpliceAI.ipynb](notebooks/variant_attribution_SpliceAI.ipynb), [variant_attribution_Flashzoi.ipynb](notebooks/variant_attribution_Flashzoi.ipynb) |
+| SpliceVarDB × ClinVar splicing tables | [SpliceVarDB.ipynb](notebooks/SpliceVarDB.ipynb), [splicevardb.ipynb](notebooks/splicevardb.ipynb) |
+| QTL effect-size comparisons | [QTL_annotations.ipynb](notebooks/QTL_annotations.ipynb) |
+
+The surrogate-modeling / epistasis methodology underlying the attribution
+notebooks is documented in [docs/methods_epistasis.md](docs/methods_epistasis.md)
+and demonstrated on a tiny CPU dataset in [`demo/`](demo/).
 
 ## Additional resources
 
