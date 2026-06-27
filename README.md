@@ -6,11 +6,11 @@ Using DNA sequence models to compute **Variant Effect Predictions (VEPs)** acros
 
 ## Overview
 
-This repository provides a pipeline and analysis toolkit for running DNA-based variant effect predictors (e.g., SpliceAI, Flashzoi/Borzoi, DECIMA, Evo2) on population-scale genomic data. It integrates with [GenVarLoader](https://github.com/mcvickerlab/GenVarLoader) (GVL) to load haplotypes and reference data, runs VEP models on clinical variant sites (e.g., ClinVar), and supports downstream analysis such as variant attribution, epistasis testing, and population-specific effects.
+This repository provides a pipeline and analysis toolkit for running DNA-based variant effect predictors (e.g., SpliceAI, Flashzoi/Borzoi) on population-scale genomic data. It integrates with [GenVarLoader](https://github.com/mcvickerlab/GenVarLoader) (GVL) to load haplotypes and reference data, runs VEP models on clinical variant sites (e.g., ClinVar), and supports downstream analysis such as variant attribution, epistasis testing, and population-specific effects.
 
 **Key capabilities:**
 
-- **Multi-model VEP pipeline**: Run SpliceAI, Flashzoi, DECIMA, Evo2, and related models via a unified interface (`src/vep_pipeline.py`).
+- **Multi-model VEP pipeline**: Run SpliceAI, Flashzoi, and related models via a unified interface (`src/vep_pipeline.py`).
 - **Population-scale data**: Use 1000 Genomes and similar cohorts via GVL; scripts and notebooks cover data download and metadata.
 - **Variant attribution & epistasis**: Relate wild-type (WT) variants to clinical VEP scores (e.g., Ridge regression, epistasis tests); methods are documented in `docs/`.
 - **Splicing & UTR resources**: SpliceVarDB integration, splicing region definitions, and ClinVar UTR variant workflows.
@@ -24,7 +24,7 @@ Each model typically has its own conda environment (see [Environment creation](#
 
 - **Operating systems tested:** Linux (Ubuntu 20.04+ / RHEL 8+ on HPC), macOS 14+
 - **Python:** 3.12.9 (3.10–3.12 also supported)
-- **Key dependencies:** see `conda/*.yml` for per-model environments (SpliceAI, Flashzoi, DECIMA, Evo2, DNABERT, AlphaGenome, MultiMolecule, GenVarLoader); top-level base env in `conda/conda.yml`
+- **Key dependencies:** see `conda/*.yml` for per-model environments (SpliceAI, Flashzoi, AlphaGenome, MultiMolecule, GenVarLoader); top-level base env in `conda/conda.yml`
 - **Non-standard hardware:** NVIDIA GPU required for model inference (tested on A100 80 GB and H100 80 GB); CPU-only runs are possible for small examples but not recommended
 
 ## Installation
@@ -97,7 +97,7 @@ VEP_DNA/
 
 ```bash
 cd /path/to/VEP_DNA
-conda activate flashzoi   # or spliceai, evo2, etc.
+conda activate flashzoi   # or spliceai, etc.
 jupyter notebook notebooks/vep_dna_pipeline.ipynb
 ```
 
@@ -119,9 +119,6 @@ conda activate <name>
 | `conda.yml`        | Base/general (pandas, numpy, torch, plotting). |
 | `spliceai.yml`     | SpliceAI + GenVarLoader. |
 | `flashzoi.yml`     | Flashzoi/Borzoi. |
-| `decima.yml`       | DECIMA. |
-| `evo2.yml`         | Evo2. |
-| `dnabert.yml`      | DNABERT. |
 | `gvl.yml`          | GenVarLoader-focused. |
 | `xarray.yml`       | xarray/zarr for array-backed results. |
 | `multimolecule.yml`| Multimolecule/splice-related stack. |
@@ -144,8 +141,6 @@ Notebooks are in **`notebooks/`**. Run them from the **repository root** (they s
 | [variant_attribution_SpliceAI.ipynb](notebooks/variant_attribution_SpliceAI.ipynb) | **SpliceAI attribution**: haplotype × WT variant matrix, VEP scores, Ridge-based joint effects, epistasis (within-model vs across-model); splicing region definitions. |
 | [variant_attribution_Flashzoi.ipynb](notebooks/variant_attribution_Flashzoi.ipynb) | **Flashzoi attribution**: variant attribution workflow for Borzoi/Flashzoi (logits, PCA, cosine similarity, batching). |
 | [flashzoi.ipynb](notebooks/flashzoi.ipynb) | **Flashzoi/Borzoi**: run model, PCA on track deltas, cosine similarity (logits and PCA), batch processing, track metadata. |
-| [DECIMA.ipynb](notebooks/DECIMA.ipynb) | **DECIMA**: DECIMA VEP and GenVarLoader tracks; links to DECIMA API and tutorials. |
-| [Evo2.ipynb](notebooks/Evo2.ipynb) | **Evo2**: environment setup and usage for Evo2. |
 | [GVL.ipynb](notebooks/GVL.ipynb) | **GenVarLoader**: load and work with GVL datasets (e.g. 1000 Genomes). |
 | [data_downloaders.ipynb](notebooks/data_downloaders.ipynb) | **Data download**: 1000 Genomes collections, FTP/manifest, VCF discovery via `onekg`. |
 | [splicevardb.ipynb](notebooks/splicevardb.ipynb) | **SpliceVarDB (lowercase)**: download and explore [SpliceVarDB](https://compbio.ccia.org.au/splicevardb/) data. |
@@ -175,4 +170,4 @@ Notebooks are in **`notebooks/`**. Run them from the **repository root** (they s
 - **SpliceVarDB**: [SpliceVarDB](https://compbio.ccia.org.au/splicevardb/) — download and processing in [SpliceVarDB.ipynb](notebooks/SpliceVarDB.ipynb).
 - **GenVarLoader**: [GitHub](https://github.com/mcvickerlab/GenVarLoader).
 
-If you use this repository, please cite the relevant model papers (SpliceAI, Borzoi/Flashzoi, DECIMA, Evo2, etc.) and GenVarLoader as appropriate.
+If you use this repository, please cite the relevant model papers (SpliceAI, Borzoi/Flashzoi, etc.) and GenVarLoader as appropriate.
