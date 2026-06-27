@@ -34,7 +34,7 @@ See the [Getting started](#getting-started) section below for step-by-step instr
 - **~10–20 min** to create a single model's conda environment (e.g. `conda/spliceai.yml`)
 - Additional time on first run for one-time downloads of model weights
 
-> *Maintainer to confirm measured timings before final submission.*
+> *Timings are approximate and will vary with hardware, network speed, and model-weight cache state.*
 
 ## Demo
 
@@ -43,7 +43,7 @@ The fastest end-to-end demo is **`notebooks/vep_dna_pipeline.ipynb`**, which run
 - **Expected runtime:** ~3–5 min on 1× A100 GPU for the chr22 subset
 - **Expected output:** a zarr dataset of per-haplotype VEP scores, plus summary plots inline in the notebook
 
-> *Maintainer to confirm measured timings before final submission.*
+> *Timings are approximate and will vary with hardware, network speed, and model-weight cache state.*
 
 ## License
 
